@@ -1,6 +1,7 @@
 from will_citadel import Game, Coordinate
 from will_citadel import Bird, Knight, Turtle, Rabbit, Builder, Bomber, Necromancer, Assassin
 from will_citadel import Land
+from will_citadel import PlacementError
 
 def test_create_game():
     game = Game()
@@ -75,8 +76,8 @@ def test_choose_community_pieces(game:Game|None=None) -> Game:
         assert False, "Player 0 was allowed to choose more than 3 community pieces; should have thrown an error."
 
     assert game.community_pool == [player0builder, player0bomber, player0necromancer, player1assassin, player1builder, player1assassin2]
-    assert player0.community_pieces == [player0builder, player0bomber, player0necromancer]
-    assert player1.community_pieces == [player1assassin, player1builder, player1assassin2]
+    assert player0.community_entities == [player0builder, player0bomber, player0necromancer]
+    assert player1.community_entities == [player1assassin, player1builder, player1assassin2]
     
 
 def test_place_land(game:Game|None=None):
@@ -93,14 +94,14 @@ def test_place_land(game:Game|None=None):
     assert game.current_player == player0
     try:
         player0.place_land(Coordinate(0, 0))
-    except ValueError as e:
+    except PlacementError as e:
         assert "Cannot place land at" in str(e)
     else:
         assert False, "Player 0 was allowed to place land at (0, 0), which already has a land; should have thrown an error."
     
     try:
         player0.place_land(Coordinate(0, 4))
-    except ValueError as e:
+    except PlacementError as e:
         assert "Cannot place land at" in str(e)
     else:
         assert False, "Player 0 was allowed to place land at (0, 4), which is not adjacent to an existing land; should have thrown an error."
@@ -117,11 +118,22 @@ def test_place_land(game:Game|None=None):
 
     try:
         player0.place_land(Coordinate(1, 0))
-    except ValueError as e:
+    except PlacementError as e:
         assert "Players are not allowed to place more than" in str(e)
     else:
         assert False, "Player 0 was allowed to place more than 3 lands; should have thrown an error."
     
-    assert len(game.board.find_tiles_by_entity_type(Land)) == 6
+    assert len(game.board.find_tiles(Land)) == 6
     assert game.board[Coordinate(0, 0)].has_type(Land)
     assert game.board[Coordinate(2, 2)].is_water
+
+
+def test_place_citadels(game:Game|None=None):
+    if game is None:
+        game = Game()
+        test_place_land(game)
+
+    player0, player1 = game.players
+
+    player0.place_citadel(Coordinate(0, 0))
+    player1.place_citadel(Coordinate(0, 3))
