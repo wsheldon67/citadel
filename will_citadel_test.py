@@ -105,6 +105,9 @@ def test_place_land(game:Game|None=None):
     else:
         assert False, "Player 0 was allowed to place land at (0, 4), which is not adjacent to an existing land; should have thrown an error."
     
+    player0.place_land(Coordinate(1, 0))
+    player1.place_land(Coordinate(1, 1))
+
     assert not player0.is_done_placing_lands
     assert not player1.is_done_placing_lands
     player0.place_land(Coordinate(0, 2))
@@ -120,3 +123,5 @@ def test_place_land(game:Game|None=None):
         assert False, "Player 0 was allowed to place more than 3 lands; should have thrown an error."
     
     assert len(game.board.find_tiles_by_entity_type(Land)) == 6
+    assert game.board[Coordinate(0, 0)].has_type(Land)
+    assert game.board[Coordinate(2, 2)].is_water

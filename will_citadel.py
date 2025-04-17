@@ -1,8 +1,20 @@
 from __future__ import annotations
 from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type, TypeAlias
+from enum import Enum
 
 
-BoolWithReason:TypeAlias = tuple[Literal[True], None]|tuple[Literal[False], str]
+class BoolWithReason(str):
+    '''A string that can be used as a boolean with a reason.
+    '''
+    def __bool__(self) -> bool:
+        return len(self) == 0
+
+
+class Layer(Enum):
+    '''The layer of an entity.'''
+    TERRAIN = 0
+    PIECE = 1
+    
 
 class Coordinate(NamedTuple):
     '''A coordinate on the board.'''
@@ -134,10 +146,11 @@ class Player():
     def land_tiles(self) -> 'EntityList[Land]':
         '''The land tiles this player has placed.
         '''
-        player_lands = []
+        player_lands = EntityList()
         for tile in self.game.board.values():
             if tile.land and tile.land.created_by == self:
                 player_lands.append(tile.land)
+        return player_lands
     
 
     @property
@@ -156,12 +169,13 @@ class Player():
         '''
         if self.is_done_placing_lands:
             raise ValueError(f"Players are not allowed to place more than {self.game.lands_per_player} lands. Player '{self.name}' has already placed {len(self.land_tiles)} lands.")
-        can_place, reason = self.game.board.can_place_land(coordinate)
+        can_place = self.game.board.can_place_land(coordinate)
         if not can_place:
-            raise ValueError(f"Cannot place land at {coordinate}: {reason}")
+            raise ValueError(f"Cannot place land at {coordinate}: {can_place}")
         land = Land()
         land.created_by = self
         self.game.board.place_entity(land, coordinate)
+        self.game.end_turn()
 
 
 class Board(dict[Coordinate, 'Tile']):
@@ -184,7 +198,7 @@ class Board(dict[Coordinate, 'Tile']):
         '''
     def __getitem__(self, coordinate):
         if isinstance(coordinate, list):
-            return [super().get(coord, Tile(self, coord)) for coord in coordinate]
+            return [self.get(coord, Tile(self, coord)) for coord in coordinate]
         elif isinstance(coordinate, Coordinate):
             return super().get(coordinate, Tile(self, coordinate))
         else:
@@ -290,14 +304,15 @@ class Board(dict[Coordinate, 'Tile']):
             A tuple of (can_place, reason).
         '''
         # Can only place land on empty (water) tiles
-        if self[coordinate].has_entities:
-            return False, f"already occupied"
+        can_add_to_tile = self[coordinate].can_add(Land())
+        if not can_add_to_tile:
+            return can_add_to_tile
         # Land tiles must be placed adjacent (orthogonally or diagonally) to another land tile
         adjacent_to_land = any([tile.has_type(Land) for tile in self[coordinate].get_adjacent_tiles()])
         board_has_land = len(self.find_entities_by_type(Land)) > 0
         if not adjacent_to_land and board_has_land:
-            return False, f"not adjacent to any land tiles"
-        return True, None
+            return BoolWithReason(f"not adjacent to any land tiles")
+        return BoolWithReason("")
     
 
     @property
@@ -326,7 +341,7 @@ class Board(dict[Coordinate, 'Tile']):
                 connected_citadels.add(tile.citadel)
             if len(connected_citadels) == len(self.citadels):
                 return
-            if tile.has_type(Land) or tile.has_type(Turtle):
+            if tile.get_by_layer(Layer.TERRAIN):
                 for adjacent_tile in tile.get_adjacent_tiles():
                     walk(adjacent_tile)
         walk(starting_citadel)
@@ -347,9 +362,9 @@ class Board(dict[Coordinate, 'Tile']):
         new_board.move_entity(entity, to)
         
         if not new_board.citadels_are_connected:
-            return False, "move would disconnect citadels"
+            return BoolWithReason("move would disconnect citadels")
         
-        return True, None
+        return BoolWithReason("")
 
 
 
@@ -374,6 +389,15 @@ class EntityList(list, Generic[T]):
             entity_type: The type of entity to check for.
         '''
         return any(isinstance(entity, entity_type) for entity in self)
+    
+
+    def get_by_type(self, entity_type: Type['Entity']) -> 'EntityList':
+        '''Get all entities of the given type.
+
+        Args:
+            entity_type: The type of entity to get.
+        '''
+        return EntityList([entity for entity in self if isinstance(entity, entity_type)])
 
 
 class Tile(EntityList):
@@ -389,6 +413,44 @@ class Tile(EntityList):
         super().__init__()
         self.board = board
         self.coordinate = coordinate
+    
+
+    def append(self, entity:Entity):
+        can_add = self.can_add(entity)
+        if can_add:
+            super().append(entity)
+        else:
+            raise ValueError(f"Cannot add {entity.__class__.__name__} to tile at {self.coordinate}: {can_add}")
+    
+
+    def can_add(self, entity:Entity) -> BoolWithReason:
+        '''Check if an entity can be added to this tile.
+
+        Args:
+            entity: The entity to add.
+        '''
+        if self.get_by_layer(entity.layer):
+            return BoolWithReason(f"layer {entity.layer.name} already occupied")
+        
+        if entity.layer.value > 0:
+            layer_below = Layer(entity.layer.value - 1)
+            if not self.get_by_layer(layer_below):
+                return BoolWithReason(f"{entity.layer.name}-layer entities must be placed on top of a {layer_below.name}-layer entity")
+    
+        return BoolWithReason("")
+    
+    
+
+    def get_by_layer(self, layer:Layer) -> 'Entity':
+        '''Get the first entity of the given layer.
+
+        Args:
+            layer: The layer to get.
+        '''
+        for entity in self:
+            if entity.layer == layer:
+                return entity
+        return None
     
 
     @property
@@ -438,6 +500,7 @@ class Tile(EntityList):
 class Entity():
     '''An game object that can be placed on a tile.
     '''
+    layer:Layer = Layer.PIECE
     def __init__(self):
         self.created_by:Player|None = None
 
@@ -450,26 +513,34 @@ class Piece(Entity):
 class Bird(Piece):
     pass
 
+
 class Knight(Piece):
     pass
 
+
 class Turtle(Piece):
-    pass
+    layer = Layer.TERRAIN
+
 
 class Rabbit(Piece):
     pass
 
+
 class Builder(Piece):
     pass
+
 
 class Bomber(Piece):
     pass
 
+
 class Necromancer(Piece):
     pass
 
+
 class Assassin(Piece):
     pass
+
 
 all_pieces = [
     Bird,
@@ -486,6 +557,7 @@ all_pieces = [
 class Land(Entity):
     '''A land entity. Most pieces are placed on tiles with land.
     '''
+    layer = Layer.TERRAIN
 
 
 class Citadel(Entity):
