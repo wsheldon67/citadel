@@ -1,5 +1,7 @@
 from __future__ import annotations
-from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type, TypeAlias
+from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type
+from typing import Callable
+from abc import abstractmethod, ABC
 from enum import Enum
 
 
@@ -35,7 +37,10 @@ class Layer(Enum):
 T = TypeVar('T', bound='Entity')
 
 
-class PlacementError(Exception):
+class ActionError(Exception):
+    pass
+
+class PlacementError(ActionError):
     pass
 
 
@@ -87,6 +92,7 @@ class Coordinate(NamedTuple):
         return f"({self.x}, {self.y})"
 
 
+
 class Rectangle(NamedTuple):
     '''A rectangle on the board.'''
     x_min: int
@@ -121,6 +127,7 @@ class Rectangle(NamedTuple):
 class Game():
     '''The whole game.
     '''
+    _player_rotations = [90, 270, 0, 180]
     def __init__(self, number_of_players:int=2, lands_per_player:int=5, personal_pieces_per_player:int=3, community_pieces_per_player:int=3):
         '''Create a new game.
 
@@ -133,22 +140,25 @@ class Game():
         self.lands_per_player:int = lands_per_player
         self.personal_pieces_per_player:int = personal_pieces_per_player
         self.community_pieces_per_player:int = community_pieces_per_player
-        self.players:list[Player] = [Player(f"Player {i}", self) for i in range(number_of_players)]
-        self.board = Board()
+        self.players:list[Player] = []
+        self.board = Board(self)
         self.turn:int = 0
-        self.community_pool:EntityList[Piece] = EntityList(name='Community Pool')
-        self.graveyard:EntityList[Piece] = EntityList(name='Graveyard')
+        self.community_pool:EntityList[Piece] = EntityList(self, name='Community Pool')
+        self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
         self.citadels_per_player:int = 1
+
+        for i in range(number_of_players):
+            new_player = Player(f"Player {i}", self)
+            new_player.rotation = self._player_rotations[i]
+            self.players.append(new_player)
 
         for i in range(self.lands_per_player):
             for player in self.players:
-                land = Land()
-                land.created_by = player
+                land = Land(player.personal_stash, player)
                 player.personal_stash.append(land)
         for i in range(self.citadels_per_player):
             for player in self.players:
-                citadel = Citadel()
-                citadel.created_by = player
+                citadel = Citadel(player.personal_stash, player, player)
                 player.personal_stash.append(citadel)
 
 
@@ -202,8 +212,107 @@ class Game():
         <p>Current Player: {self.current_player.name}</p>
         <p>Phase: {self.phase.name}</p>
         </div>"""
-
     
+
+    def can_move(self, piece:'Piece', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if a piece can be moved to the given tile.
+
+        Args:
+            piece: The piece to move.
+            target: The tile to move the piece to.
+        '''
+        can_add_to_tile = self.board[target.coordinate].can_add(piece)
+        if not can_add_to_tile:
+            return BoolWithReason(f"cannot add {piece} to {target}: {can_add_to_tile.reason}")
+    
+        if piece.owner != player:
+            return BoolWithReason(f"Cannot move {piece}: not owned by player '{player.name}'.")
+
+        new_board = self.board.copy()
+        new_board.place(piece, target.coordinate, to_test=True)
+        
+        if not new_board.citadels_are_connected:
+            return BoolWithReason("move would disconnect citadels")
+
+        return BoolWithReason(True)
+
+
+    def move(self, piece:'Piece', target:'Tile', player:'Player'):
+        '''Move a piece to the given tile.
+
+        Args:
+            piece: The piece to move.
+            target: The tile to move the piece to.
+            player: The player moving the piece.
+        '''
+        can_move = self.can_move(piece, target, player)
+        if not can_move:
+            raise PlacementError(f"Cannot move {piece} to {target}: {can_move.reason}")
+        piece.location.remove(piece)
+        target.append(piece)
+    
+
+    def can_place(self, entity:'Entity', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if an entity can be placed on the given tile.
+
+        Args:
+            entity: The entity to place.
+            target: The tile to place the entity on.
+        '''
+        can_add_to_tile = self.board[target.coordinate].can_add(entity)
+        if not can_add_to_tile:
+            return BoolWithReason(f"cannot add {entity} to {target}: {can_add_to_tile.reason}")
+    
+        if not entity in player.placeable_entities:
+            return BoolWithReason(f"Player '{self}' does not have access to place {entity}.")
+    
+        if isinstance(entity, Piece) and not player.is_adjacent_to_citadel(target):
+            return BoolWithReason(f"Cannot place {entity} at {target}: not adjacent to any of player's citadels.")
+
+        return BoolWithReason(True)
+
+
+    def place(self, entity:'Entity', target:'Tile', player:'Player'):
+        '''Place an entity on the given tile.
+
+        Args:
+            entity: The entity to place.
+            target: The tile to place the entity on.
+        '''
+        if not isinstance(entity, Entity):
+            raise TypeError(f"Can only place an Entity, not {type(entity)}.")
+        can_place = self.can_place(entity, target, player)
+        if not can_place:
+            raise PlacementError(f"Cannot place {entity} on {target}: {can_place.reason}")
+        entity.owner = player
+        entity.location.remove(entity)
+        target.append(entity)
+
+
+    def can_capture(self, entity:'Entity', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if an entity can capture another entity.
+
+        Args:
+            entity: The entity to capture with.
+            target: The tile to attempt capture on.
+            player: The player attempting the capture.
+        '''
+        if not target.where(Piece):
+            return BoolWithReason(f"Cannot capture at {target}: no pieces to capture.")
+
+        return BoolWithReason(True)
+    
+
+    def capture(self, entity:'Entity', target:'Tile', player:'Player'):
+        '''Capture an entity, sending it to the graveyard.'''
+        can_capture = self.can_capture(entity, target, player)
+        if not can_capture:
+            raise PlacementError(f"Cannot capture {target} with {entity}: {can_capture.reason}")
+        entity = target.where(Piece)[0]
+        self.graveyard.append(entity)
+        self.board.remove(entity)
+
+
 
 class Player():
     '''A player in the game.
@@ -213,34 +322,17 @@ class Player():
         Args:
             game: The game this player is in.
         '''
-        self.personal_stash:EntityList['Piece'] = EntityList(name=f"{name}'s Personal Stash")
+        self.personal_stash:EntityList['Piece'] = EntityList(game, name=f"{name}'s Personal Stash")
         self.game:Game = game
         self.name:str = name
+        self.rotation:int = 0
 
     
     @property
-    def place_from_lists(self) -> list[EntityList]:
+    def placeable_entities(self) -> EntityList['Entity']:
         '''The entity lists this player can place from.
         '''
-        return [self.personal_stash, self.game.community_pool]
-
-
-    def can_place_entity(self, entity:'Entity') -> BoolWithReason:
-        '''Check if an entity can be used by this player.
-        '''
-        if any([entity in entity_list for entity_list in self.place_from_lists]):
-            return BoolWithReason(True)
-        return BoolWithReason(f"Player '{self.name}' does not have access to {entity}.")
-
-
-    def remove_placeable_entity(self, entity:'Entity'):
-        '''Remove an entity out of the entities available to this player for placement.
-        '''
-        for entity_list in self.place_from_lists:
-            if entity in entity_list:
-                entity_list.remove(entity)
-                return
-        raise ValueError(f"Entity '{entity}' not found in '{self.name}'s placeable entities.")
+        return self.personal_stash + self.game.community_pool
     
 
     @property
@@ -273,21 +365,30 @@ class Player():
         return self.is_done_choosing_personal_pieces and self.is_done_choosing_community_pieces
 
 
-    def choose_community_piece(self, piece:'Piece'):
+    def choose_community_piece(self, piece:'Piece'|Type['Piece']):
         '''Choose a piece for the community pool.
         '''
         if self.is_done_choosing_community_pieces:
             raise ValueError(f"Players are not allowed to choose more than {self.game.community_pieces_per_player} pieces for the community pool. '{self.name}' has already chosen {len(self.community_entities)} community pieces.")
+        
+        if isinstance(piece, type):
+            piece = piece(self.game.community_pool, self)
+        
         piece.created_by = self
         self.game.community_pool.append(piece)
 
     
-    def choose_personal_piece(self, piece:'Piece'):
+    def choose_personal_piece(self, piece:'Piece'|Type['Piece']):
         '''Choose a piece for the personal stash.
         '''
         if self.is_done_choosing_personal_pieces:
-            raise ValueError(f"Players are not allowed to choose more than {self.game.personal_pieces_per_player} pieces for their personal stash. '{self.name}' has already chosen {len(self.personal_stash)} personal pieces.")
+            raise ValueError(f"Players are not allowed to choose more than {self.game.personal_pieces_per_player} pieces for their personal stash. '{self.name}' has already chosen {len(self.personal_stash.where(Piece))} personal pieces.")
+        
+        if isinstance(piece, type):
+            piece = piece(self.personal_stash, self, self)
+        
         piece.created_by = self
+        piece.owner = self
         self.personal_stash.append(piece)
 
 
@@ -295,7 +396,7 @@ class Player():
     def land_tiles(self) -> 'EntityList[Land]':
         '''The land tiles this player has placed.
         '''
-        player_lands = EntityList()
+        player_lands = EntityList(self.game)
         for tile in self.game.board.values():
             if tile.land and tile.land.created_by == self:
                 player_lands.append(tile.land)
@@ -313,35 +414,7 @@ class Player():
     def citadels(self) -> 'EntityList[Citadel]':
         '''The citadels this player has placed.
         '''
-        return self.game.board.where(Citadel, self)
-
-
-    def can_place_land(self, coordinate:Coordinate) -> BoolWithReason:
-        '''Check if a land can be placed at the given coordinate.
-
-        Args:
-            coordinate: The coordinate to check.
-        '''
-        if self.is_done_placing_lands:
-            return BoolWithReason(f"Players are not allowed to place more than {self.game.lands_per_player} lands. Player '{self.name}' has already placed {len(self.land_tiles)} lands.")
-        can_place = self.game.board.can_place_entity(Land(), coordinate)
-        if not can_place:
-            return can_place
-        return BoolWithReason(True)
-        
-
-    def place_land(self, coordinate:Coordinate):
-        '''Place a land tile on the board.
-
-        Args:
-            coordinate: The coordinate to place the land at.
-        '''
-        can_place = self.can_place_land(coordinate)
-        if not can_place:
-            raise PlacementError(f"Cannot place land at {coordinate}: {can_place.reason}")
-        land = self.personal_stash.pop_by_type(Land)
-        self.game.board.place_entity(land, coordinate)
-        self.game.end_turn()
+        return self.game.board.where(Citadel, owner=self)
 
     
     @property
@@ -349,33 +422,6 @@ class Player():
         '''True if the player has placed all of their citadels.
         '''
         return len(self.citadels) >= self.game.citadels_per_player
-    
-
-    def can_place_citadel(self, coordinate:Coordinate) -> BoolWithReason:
-        '''Check if a citadel can be placed at the given coordinate.
-
-        Args:
-            coordinate: The coordinate to check.
-        '''
-        if self.is_done_placing_citadels:
-            return BoolWithReason(f"Players are not allowed to place more than {self.game.citadels_per_player} citadels. Player '{self.name}' has already placed {len(self.citadels)} citadels.")
-        can_place = self.game.board.can_place_entity(Citadel(), coordinate)
-        if not can_place:
-            return can_place
-        return BoolWithReason(True)
-    
-
-    def place_citadel(self, coordinate:Coordinate):
-        '''Place a citadel on the board.
-        Args:
-            coordinate: The coordinate to place the citadel at.
-        '''
-        can_place = self.can_place_citadel(coordinate)
-        if not can_place:
-            raise PlacementError(f"Cannot place citadel at {coordinate}: {can_place}")
-        citadel = self.personal_stash.pop_by_type(Citadel)
-        self.game.board.place_entity(citadel, coordinate)
-        self.game.end_turn()
 
     
     def is_adjacent_to_citadel(self, to_test:Coordinate|Tile|Entity) -> bool:
@@ -396,97 +442,116 @@ class Player():
                 return True
         return False
     
-    
-    def can_place_piece(self, piece:'Piece', coordinate:Coordinate) -> BoolWithReason:
-        '''Check if a piece can be placed at the given coordinate.
-
-        Args:
-            piece: The piece to place.
-            coordinate: The coordinate to place the piece at.
-        '''
-        # Check if the player has access to the piece
-        if not self.can_place_entity(piece):
-            return BoolWithReason(f"Player '{self.name}' does not have access to {piece.__class__.__name__}.")
         
-        # Check tile & board-level constraints.
-        can_place = self.game.board.can_place_entity(piece, coordinate)
-        if not can_place:
-            return can_place
-        
-        # Must place adjacent to their own Citadel
-        if not self.is_adjacent_to_citadel(coordinate):
-            return BoolWithReason(f"Cannot place {piece.__class__.__name__} at {coordinate}: not adjacent to any of player's citadels.")
-        
-        return BoolWithReason(True)
-    
-
-    def place_piece(self, piece:'Piece', coordinate:Coordinate):
-        '''Place a piece on the board.
-
-        Args:
-            piece: The piece to place.
-            coordinate: The coordinate to place the piece at.
-        '''
-        can_place = self.can_place_piece(piece, coordinate)
-        if not can_place:
-            raise PlacementError(f"Cannot place {piece.__class__.__name__} at {coordinate}: {can_place.reason}")
-        self.game.board.place_entity(piece, coordinate)
-        self.remove_placeable_entity(piece)
-        self.game.end_turn()
-    
-
-    def can_move_piece(self, piece:'Piece', to:Coordinate) -> BoolWithReason:
-        '''Check if a piece can be moved to the given coordinate.
-
-        Args:
-            piece: The piece to move.
-            to: The coordinate to move the piece to.
-        '''
-        # Check tile & board-level constraints.
-        can_move = self.game.board.can_move_piece(piece, to)
-        if not can_move:
-            return can_move
-        
-        # Can only move own pieces
-        if piece.created_by != self:
-            return BoolWithReason(f"Cannot move {piece}: not owned by player '{self.name}'.")
-        
-        return BoolWithReason(True)
-        
-    
-    def move_piece(self, piece:'Piece', to:Coordinate):
-        '''Move a piece to the given coordinate.
-
-        Args:
-            piece: The piece to move.
-            to: The coordinate to move the piece to.
-        '''
-        original_coordinate = piece.location.coordinate
-        can_move = self.can_move_piece(piece, to)
-        assert original_coordinate == piece.location.coordinate, f"Piece {piece} moved during can_move check; original coordinate: {original_coordinate}, new coordinate: {piece.location.coordinate}"
-        if not can_move:
-            raise PlacementError(f"Cannot move {piece} to {to}: {can_move.reason}")
-        self.game.board.move_entity(piece, to)
-        self.game.end_turn()
-        
-
     def _repr_html_(self) -> str:
         return f"""<div style='display: flex; flex-direction: column;'>{self.name}{self.personal_stash._repr_html_()}</div>"""
+
+
+    def __str__(self) -> str:
+        return f"Player({self.name})"
+    
+    def __repr__(self) -> str:
+        return f"Player({self.name})"
+
+
+    def _to_tile(self, obj:Coordinate|Tile|Entity) -> Tile:
+        '''Infer a Coordinate, Tile, or Entity to a Tile.
+
+        Args:
+            obj: The object to convert.
+        '''
+        if isinstance(obj, Coordinate):
+            return self.game.board[obj]
+        if isinstance(obj, Tile):
+            return obj
+        if isinstance(obj, Entity):
+            return obj.location
+        raise TypeError(f"Object must be a Coordinate, Tile, or Entity, not {type(obj)}.")
+    
+
+    def _to_entity(self, obj:Coordinate|Tile|Entity|Type['Entity']) -> 'Entity':
+        '''Infer a Coordinate, Tile, or Entity to an Entity.
+        
+        Returns a board piece unless the object is a type, in which case it returns the first entity of that type in the player's personal stash.
+        '''
+        if isinstance(obj, Coordinate) or isinstance(obj, Tile):
+            if isinstance(obj, Coordinate):
+                obj = self.game.board[obj]
+            entities = obj.where(owner=self)
+            if len(entities) > 1:
+                entities = entities.where(Piece)
+            if not entities:
+                raise ActionError(f"No entities found at {obj}.")
+            return entities[0]
+        if isinstance(obj, Entity):
+            return obj
+        if isinstance(obj, type):
+            entities = self.personal_stash.where(obj)
+            if not entities:
+                raise ActionError(f"Entity '{obj}' not found in personal stash.")
+            return entities[0]
+
+
+    def can_perform_action(self, entity:'Entity'|Type['Entity'], action_name:str, target:Coordinate|Tile|Entity) -> BoolWithReason:
+        '''Check if an entity can perform an action.
+
+        Args:
+            entity: The entity to perform the action on.
+            action_name: The name of the action to perform.
+            target: The target of the action. This can be a coordinate, tile, or entity.
+        '''
+        target = self._to_tile(target)
+        entity = self._to_entity(entity)
+        
+        actions = entity.actions(target, self)
+        if action_name not in actions:
+            return BoolWithReason(f"Action '{action_name}' not found on {entity}.")
+        
+        return actions[action_name].can_use
+    
+
+    def perform_action(self, entity:'Entity'|Type['Entity']|Coordinate|Tile, action_name:str, target:Coordinate|Tile|Entity):
+        '''Perform an action on an entity.
+
+        Args:
+            entity: The entity to perform the action on.
+            action_name: The name of the action to perform.
+            target: The target of the action. This can be a coordinate, tile, or entity.
+        '''
+        target = self._to_tile(target)
+        entity = self._to_entity(entity)
+        
+        can_perform = self.can_perform_action(entity, action_name, target)
+        if not can_perform:
+            raise ActionError(can_perform.reason)
+        action = entity.actions(target, self)[action_name]
+        action.execute(target, self)
+    
+
+    def place(self, entity:'Entity'|Type['Entity'], target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'place', target)
+    
+    def move(self, entity:'Entity'|Type['Entity']|Coordinate|Tile, target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'move', target)
+    
+    def capture(self, entity:'Entity'|Type['Entity']|Coordinate|Tile, target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'capture', target)
 
 
 class Board(dict[Coordinate, 'Tile']):
     '''A collection of tiles.
     '''
 
-    def __init__(self, name:str='main'):
+    def __init__(self, game:Game, name:str='main'):
         '''Create a new board.
 
         Args:
+            game: The game this board is in.
             name: A unique name for this board.
         '''
         super().__init__()
         self.name = name
-    
+        self.game:Game = game
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -537,7 +602,7 @@ class Board(dict[Coordinate, 'Tile']):
         Returns:
             A copy of the board.
         '''
-        new_board = Board()
+        new_board = Board(self.game)
         for coordinate, tile in self.items():
             new_tile = Tile(new_board, coordinate)
             new_tile.extend(tile)
@@ -545,7 +610,7 @@ class Board(dict[Coordinate, 'Tile']):
         return new_board
     
 
-    def place_entity(self, entity:'Entity', coordinate:Coordinate, to_test:bool=False):
+    def place(self, entity:'Entity', coordinate:Coordinate, to_test:bool=False):
         '''Place an entity on the board.
 
         Args:
@@ -553,13 +618,11 @@ class Board(dict[Coordinate, 'Tile']):
             coordinate: The coordinate to place the entity at.
             to_test: If True, force the placement and do not change the entity.
         '''
-        if not to_test and not self.can_place_entity(entity, coordinate):
-            raise PlacementError(f"Cannot place {entity} at {coordinate}: {self.can_place_entity(entity, coordinate)}")
         if coordinate not in self:
             self[coordinate] = Tile(self, coordinate)
         if not to_test:
             entity.location = self[coordinate]
-        self[coordinate].append(entity)
+        self[coordinate].append(entity, not to_test)
     
 
     def get_coordinate_of_entity(self, entity:'Entity') -> Coordinate|None:
@@ -574,7 +637,7 @@ class Board(dict[Coordinate, 'Tile']):
         return None
     
 
-    def remove_entity(self, entity:'Entity') -> 'Entity':
+    def remove(self, entity:'Entity') -> 'Entity':
         '''Remove an entity from the board.
 
         Args:
@@ -586,20 +649,6 @@ class Board(dict[Coordinate, 'Tile']):
         self[coordinate].remove(entity)
         if not self[coordinate]:
             del self[coordinate]
-    
-
-    def move_entity(self, entity:'Entity', to:Coordinate, to_test:bool=False):
-        '''Move an entity from one coordinate to another.
-
-        Args:
-            entity: The entity to move.
-            to: The coordinate to move the entity to.
-            to_test: If True, force the move and do not change the entity.
-        '''
-        if not to_test and not self.can_move_piece(entity, to):
-            raise PlacementError(f"Cannot move {entity} to {to}: {self.can_move_piece(entity, to).reason}")
-        self.remove_entity(entity)
-        self.place_entity(entity, to, to_test)
     
 
     def where(self,
@@ -617,7 +666,7 @@ class Board(dict[Coordinate, 'Tile']):
             owner: The player who owns the entity.
             layer: The layer of the entity.
         '''
-        entities = EntityList()
+        entities = EntityList(self.game)
         for tile in self.values():
             entities.extend(tile.where(entity_type, created_by, owner, layer))
         return entities
@@ -647,16 +696,6 @@ class Board(dict[Coordinate, 'Tile']):
                     continue
                 tiles.append(tile)
         return tiles
-
-
-    def _can_place_land(self, coordinate:Coordinate) -> BoolWithReason:
-        '''Do not call this method directly; use can_place_entity instead.'''
-        # Land tiles must be placed adjacent (orthogonally or diagonally) to another land tile
-        adjacent_to_land = any([tile.has_type(Land) for tile in self[coordinate].get_adjacent_tiles()])
-        board_has_land = len(self.where(Land)) > 0
-        if not adjacent_to_land and board_has_land:
-            return BoolWithReason(f"not adjacent to any land tiles")
-        return BoolWithReason(True)
     
 
     @property
@@ -690,59 +729,6 @@ class Board(dict[Coordinate, 'Tile']):
                     walk(adjacent_tile)
         walk(starting_citadel)
         return len(connected_citadels) == len(self.citadels)
-    
-
-    def _can_place_citadel(self, coordinate:Coordinate) -> BoolWithReason:
-        '''Do not call this method directly; use can_place_entity instead.'''
-        return BoolWithReason(True)
-
-
-    def can_place_entity(self, entity:'Entity', coordinate:Coordinate) -> BoolWithReason:
-        '''Check if an entity can be placed at the given coordinate.
-
-        Args:
-            entity: The entity to place.
-            coordinate: The coordinate to place the entity at.
-        '''
-        can_add = self[coordinate].can_add(entity)
-        if not can_add:
-            return BoolWithReason(f"cannot add {entity.__class__.__name__} to tile at {coordinate}: {can_add.reason}")
-        
-        if isinstance(entity, Citadel) and not self._can_place_citadel(coordinate):
-            return self._can_place_citadel(coordinate)
-        if isinstance(entity, Land) and not self._can_place_land(coordinate):
-            return self._can_place_land(coordinate)
-        
-        new_board = self.copy()
-        new_board.place_entity(entity, coordinate, to_test=True)
-
-        if not new_board.citadels_are_connected:
-            return BoolWithReason("placement would disconnect citadels")
-        
-        return BoolWithReason(True)
-    
-
-    def can_move_piece(self, piece:'Piece', to:Coordinate) -> BoolWithReason:
-        '''Check if an entity can be moved to the given coordinate.
-
-        Args:
-            piece: The piece to move.
-            to: The coordinate to move the entity to.
-        '''
-        if not self[to].can_add(piece):
-            return self[to].can_add(piece)
-        
-        can_move_piece = piece.can_move_to(to)
-        if not can_move_piece:
-            return can_move_piece
-
-        new_board = self.copy()
-        new_board.move_entity(piece, to, to_test=True)
-        
-        if not new_board.citadels_are_connected:
-            return BoolWithReason("move would disconnect citadels")
-
-        return BoolWithReason(True)
 
 
     @property
@@ -783,25 +769,67 @@ class Board(dict[Coordinate, 'Tile']):
             cells = []
             for y in range(int(self.extents.y_min), int(self.extents.y_max) + 1):
                 coordinate = Coordinate(x, y)
-                color, abbreviation = self[coordinate].short_html
-                cells.append(f"<td style='background-color: {color}; width: 18px; height 34px; border: 1px solid white; color: black; text-align: center;'>{abbreviation}</td>")
-            rows.append(f"<tr style='height: 36px;'><th>x{x}</th>{''.join(cells)}</tr>")
-        return f"<table>{''.join(rows)}</table>"
+                color, abbreviation, rotation = self[coordinate].short_html
+                cells.append(f"<td style='background-color: {color}; transform: rotate({rotation}deg); width: 58px; height 58px; border: 1px solid white; color: black; text-align: center; font-size: 1.5rem; padding: 0; margin: 0;'>{abbreviation}</td>")
+            rows.append(f"<tr style='height: 60px;'><th>x{x}</th>{''.join(cells)}</tr>")
+        return f"<table style='table-layout: fixed;'>{''.join(rows)}</table>"
+    
+
+    def get_vector(self, start:Coordinate, end:Coordinate) -> Vector:
+        '''Get a vector from the start to the end coordinate.
+
+        Args:
+            start: The starting coordinate of the vector.
+            end: The ending coordinate of the vector.
+        '''
+        return Vector(self, start, end)
+    
+
+
+class Vector():
+    '''An object that represents two coordinates on the board, where one of them is the starting coordinate.'''
+    def __init__(self, board:Board, start:Coordinate, end:Coordinate):
+        '''Create a new vector.
+
+        Args:
+            board: The board this vector is on.
+            start: The starting coordinate of the vector.
+            end: The ending coordinate of the vector.
+        '''
+        self.board = board
+        self.start = start
+        self.end = end
+    
+
+    def is_straight(self) -> bool:
+        '''Check if the vector is a straight line.'''
+        return self.start.x == self.end.x or self.start.y == self.end.y
+    
+
+    def is_diagonal(self) -> bool:
+        '''Check if the vector is a diagonal line.'''
+        return abs(self.start.x - self.end.x) == abs(self.start.y - self.end.y)
+
+
+U = TypeVar('U', bound='Entity')
 
 
 class EntityList(list, Generic[T]):
     '''A collection of entities.
     '''
 
-    def __init__(self, entities:list[T]=[], name:str|None=None):
+    def __init__(self, game:Game, entities:list[T]=[], name:str|None=None):
         '''Create a new entity list.
 
         Args:
+            game: The game this entity list is in.
             entities: The entities to add to the list.
             name: A unique name for this entity list.
         '''
         super().__init__(entities)
         self.name = name
+        self.game = game
+
 
     def __iter__(self) -> Iterator[T]:
         '''Iterate over the entities in the collection.
@@ -820,25 +848,11 @@ class EntityList(list, Generic[T]):
         return any(isinstance(entity, entity_type) for entity in self)
     
 
-    @overload
     def where(self,
-        entity_type: Type[T],
+        entity_type: Type[U]=None,
         created_by: Player|None=None,
         owner: Player|None=None,
-        layer: Layer|None=None) -> 'EntityList[T]':
-        pass
-    @overload
-    def where(self,
-        entity_type:None=None,
-        created_by: Player|None=None,
-        owner: Player|None=None,
-        layer: Layer|None=None) -> 'EntityList[Entity]':
-        pass
-    def where(self,
-        entity_type: Type[T]|None=None,
-        created_by: Player|None=None,
-        owner: Player|None=None,
-        layer: Layer|None=None) -> 'EntityList[T]':
+        layer: Layer|None=None) -> 'EntityList[U]':
         '''Search for entities in the collection.
         
         If any arguments are not provided, all entities for that parameter are returned.
@@ -849,7 +863,7 @@ class EntityList(list, Generic[T]):
             owner: The player who owns the entity.
             layer: The layer of the entity.
         '''
-        entities = EntityList()
+        entities = EntityList(self.game)
         for entity in self:
             if entity_type and not isinstance(entity, entity_type):
                 continue
@@ -859,20 +873,8 @@ class EntityList(list, Generic[T]):
                 continue
             if owner and entity.owner != owner:
                 continue
-            entities.append(entity)
+            entities.append(entity, reset_location=False)
         return entities
-    
-
-    def pop_by_type(self, entity_type: Type[T]) -> T:
-        '''Pull the first entity of the given type out of this entity list.
-
-        Args:
-            entity_type: The type of entity to pop.
-        '''
-        for i, entity in enumerate(self):
-            if isinstance(entity, entity_type):
-                return self.pop(i)
-        raise ValueError(f"No {entity_type.__name__} found in list")
     
 
     def where_not(self,
@@ -890,7 +892,7 @@ class EntityList(list, Generic[T]):
             owner: The player who owns the entity to exclude.
             layer: The layer of the entity to exclude.
         '''
-        entities = EntityList()
+        entities = EntityList(self.game)
         for entity in self:
             if entity_type and isinstance(entity, entity_type):
                 continue
@@ -907,8 +909,31 @@ class EntityList(list, Generic[T]):
     def _repr_html_(self) -> str:
         res = []
         for entity in self:
-            res.append(f"<div style='background-color: {entity.color}'>{entity.abbreviation}</div>")
+            res.append(f"<div style='background-color: {entity.color}; font-size: 1.5rem;'>{entity.abbreviation}</div>")
         return f"<div style='display: flex; flex-wrap: wrap; width: 100px;'>{''.join(res)}</div>"
+
+
+    def __getitem__(self, index:int) -> T:
+        '''Get an entity by index.'''
+        return super().__getitem__(index)
+    
+
+    def __str__(self) -> str:
+        '''Get a string representation of the entity list.
+        '''
+        res = []
+        for entity in self:
+            res.append(str(entity))
+        return f"EntityList:{self.name}({', '.join(res)})"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+    
+
+    def append(self, object:'Entity', reset_location:bool=True):
+        if reset_location:
+            object.location = self
+        return super().append(object)
 
 
 
@@ -922,7 +947,7 @@ class Tile(EntityList):
             board: The board this tile is on.
             coordinate: The coordinate of this tile.
         '''
-        super().__init__(name=f"{board.name}{coordinate}")
+        super().__init__(board.game, name=f"{board.name}{coordinate}")
         self.board = board
         self.coordinate = coordinate
     
@@ -937,10 +962,11 @@ class Tile(EntityList):
         return self.coordinate == other.coordinate and self.board == other.board
     
 
-    def append(self, entity:Entity):
+    def append(self, entity:Entity, reset_location:bool=True):
         can_add = self.can_add(entity)
         if can_add:
-            super().append(entity)
+            super().append(entity, reset_location)
+            self.board[self.coordinate] = self
         else:
             raise ValueError(f"Cannot add {entity.__class__.__name__} to tile at {self.coordinate}: {can_add}")
     
@@ -989,6 +1015,16 @@ class Tile(EntityList):
     
 
     @property
+    def piece(self) -> 'Piece'|None:
+        '''The first piece on this tile, if any.
+        '''
+        for entity in self:
+            if isinstance(entity, Piece):
+                return entity
+        return None
+    
+
+    @property
     def citadel(self) -> 'Citadel'|None:
         '''The citadel on this tile, if any.
         '''
@@ -1022,7 +1058,7 @@ class Tile(EntityList):
     
     
     @property
-    def short_html(self) -> tuple[str, str]:
+    def short_html(self) -> tuple[str, str, str]:
         '''Return a css color representing the terrain layer, and single character representing the piece layer.
         '''
         terrain_layer = self.get_by_layer(Layer.TERRAIN)
@@ -1034,13 +1070,18 @@ class Tile(EntityList):
         piece_layer = self.get_by_layer(Layer.PIECE)
         if piece_layer:
             abbreviation = piece_layer.abbreviation
+            if piece_layer.owner:
+                rotation = piece_layer.owner.rotation
+            else:
+                rotation = 0
         else:
             abbreviation = " "
-        return color, abbreviation
+            rotation = 0
+        return color, abbreviation, str(rotation)
 
 
 
-class Entity():
+class Entity(ABC):
     '''An game object that can be placed on a tile.
 
     Args:
@@ -1052,11 +1093,11 @@ class Entity():
     color:str = "#000000"
     abbreviation:str = " "
 
-    def __init__(self, created_by:Player|None=None, owner:Player|None=None, location:EntityList|None=None):
+    def __init__(self, location:EntityList, created_by:Player|None=None, owner:Player|None=None):
         self.created_by:Player|None = created_by
         self.owner:Player|None = owner
-        self.location:EntityList|None = location
-
+        self.location:EntityList = location
+        self.game:Game = location.game
     
 
     def __str__(self) -> str:
@@ -1082,44 +1123,14 @@ class Entity():
         return self.__class__(self.created_by, self.owner, self.location)
 
 
-class Piece(Entity):
-    '''The primary moveable entity in the game.
-    '''
-
-    def can_move_to(self, to:Coordinate) -> BoolWithReason:
-        '''Check if this piece can move to the given coordinate.
-
-        This method only needs to specify piece-specific rules.
-
-        Args:
-            to: The coordinate to move to.
+    @property
+    def board(self) -> Board|None:
+        '''The board this entity is on.
         '''
         if not self.location:
-            return BoolWithReason(f"Piece {self} has no location.")
-        if not isinstance(self.location, Tile):
-            return BoolWithReason(f"Piece {self} is not on a board.")
-        return BoolWithReason(True)
-    
-
-    def can_capture(self, to:Coordinate) -> BoolWithReason:
-        '''Check if this piece can capture another piece at the given coordinate.
-
-        This method only needs to specify piece-specific rules.
-
-        Args:
-            to: The coordinate to capture at.
-        '''
-        # cannot capture if not on a board
-        if not self.location:
-            return BoolWithReason(f"Piece {self} has no location.")
-        if not isinstance(self.location, Tile):
-            return BoolWithReason(f"Piece {self} is not on a board.")
-        
-        # can only capture if there is an opponent's piece on the tile.
-        if not self.location.where_not(owner=self.owner).where(Piece):
-            return BoolWithReason(f"Cannot capture at {to}: no opponent pieces to capture.")
-        
-        return BoolWithReason(True)
+            return None
+        if isinstance(self.location, Tile):
+            return self.location.board
     
 
     @property
@@ -1131,91 +1142,244 @@ class Piece(Entity):
         if not isinstance(self.location, Tile):
             return None
         return self.location.coordinate
+    
+
+    def get_vector_to(self, target:'Tile') -> Vector:
+        '''Get a vector from this entity to the target coordinate.
+
+        Args:
+            target: The target coordinate.
+        '''
+        if self.board != target.board:
+            raise ValueError(f"Cannot get vector from {self} to {target}: not on the same board.")
+        return self.board.get_vector(self.coordinate, target.coordinate)
+    
+    @abstractmethod
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        '''The player can use this entity to perform an action on the given tile.
+
+        Args:
+            target: The tile to attempt to perform the action on.
+            player: The player using the piece.
+        '''
+    
+
+    def place(self, target:Tile, player:Player):
+        '''Place this entity on the given tile.
+
+        Args:
+            target: The tile to place the entity on.
+            player: The player placing the entity.
+        '''
+        self.game.place(self, target, player)
+    
+
+    def capture(self, target:Tile, player:Player):
+        '''Capture the entity at the given tile.
+
+        Args:
+            target: The tile to capture the entity on.
+            player: The player using the entity to capture the target.
+        '''
+        self.game.capture(self, target, player)
+    
+
+    def move(self, target:Tile, player:Player):
+        '''Move this entity to the given tile.
+
+        Args:
+            target: The tile to move the entity to.
+            player: The player moving the entity.
+        '''
+        self.game.move(self, target, player)
+
+
+class Action():
+    '''An action that can be performed by a piece.
+
+    Args:
+        name: The name of the action.
+        description: The description of the action.
+    '''
+    def __init__(self, name:str, description:str, action:Callable[[Tile, Player], None], can_use:BoolWithReason):
+        self.name = name
+        self.description = description
+        self.execute = action
+        self.can_use = can_use
+
+
+class ActionList(dict[str, Action]):
+    '''A collection of actions that can be performed by a piece.
+
+    Args:
+        actions: The actions to add to the list.
+    '''
+    @overload
+    def add(self, name:str, description:str, action:Callable[[Tile, Player], None], can_use:BoolWithReason):
+        '''Add an action to the list.
+        
+        Args:
+            name: The name of the action.
+            description: The description of the action.
+            action: The action to add.
+            can_use: A BoolWithReason indicating if the action can be used.
+        '''
+    @overload
+    def add(self, action:Action):
+        '''Add an action to the list.
+
+        Args:
+            action: The action to add.
+        '''
+    def add(self, name, description=None, action=None, can_use=None):
+        if isinstance(name, Action):
+            self[name.name] = name
+        else:
+            self[name] = Action(name, description, action, can_use)
+    
+
+    def __getitem__(self, key) -> Action:
+        return super().__getitem__(key)
+    
+
+    def usable_actions(self) -> 'ActionList':
+        '''Filter the actions to only those that can be used.
+        '''
+        usable = ActionList()
+        for name, action in self.items():
+            if action.can_use:
+                usable[name] = action
+        return usable
+
+
+class Piece(Entity):
+    '''The primary moveable entity in the game.
+    '''
 
 
 class Bird(Piece):
     abbreviation = "🐦"
 
-    def can_move_to(self, to:Coordinate) -> BoolWithReason:
-        '''The Bird moves in a straight line, either horizontally or vertically, for as many tiles as you want. It cannot move diagonally.
-        '''
-        base = super().can_move_to(to)
-        if not base:
-            return base
-        # TODO can birds fly over other pieces?
-        if self.coordinate.x != to.x and self.coordinate.y != to.y:
-            return BoolWithReason(f"Cannot move {self} to {to}: not in a straight line.")
-        
-        return BoolWithReason(True)
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList()
+        res.add("move", "Move in a straight line", self.move, self.can_move(target, player))
+        res.add("capture", "Capture a piece", self.capture, self.can_capture(target, player))
+        res.add("place", "Place a Bird", self.place, self.game.can_place(self, target, player))
+        return res
     
 
-    def can_capture(self, to:Coordinate) -> BoolWithReason:
-        '''The Bird can capture any piece it lands on during its move.
-        '''
-        base = super().can_capture(to)
-        if not base:
-            return base
-        
-        can_move = self.can_move_to(to)
-        if not can_move:
-            return BoolWithReason(f"{can_move.reason}; Birds can only capture pieces they can move to.")
+    def can_move(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Bird moves in a straight line, either horizontally or vertically, for as many tiles as you want.
+        # It cannot move diagonally.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
 
+        movement = self.get_vector_to(target)
+        if not movement.is_straight():
+            return BoolWithReason("Bird can only move in a straight line")
+
+        return self.game.can_move(self, target, player)
+    
+
+    def can_capture(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Bird can capture any piece it lands on during its move.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
+
+        movement = self.get_vector_to(target)
+        if not movement.is_straight():
+            return BoolWithReason("Bird can only capture in a straight line")
+        
+        return self.game.can_capture(self, target, player)
+    
+
+    def capture(self, target, player):
+        # The Bird takes the place of the captured piece.
+        super().capture(target, player)
+        self.move(target, player)
+
+        
 
 class Knight(Piece):
     abbreviation = "♞"
     
-    def can_move_to(self, to):
-        '''The Knight moves one square at a time, either orthogonally (up, down, left, right) or diagonally.
-        '''
-        base = super().can_move_to(to)
-        if not base:
-            return base
-        
-        if to not in self.coordinate.get_adjacent_coordinates():
-            return BoolWithReason(f"Cannot move {self} to {to}: not adjacent to current location.")
-        return BoolWithReason(True)
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList()
+        res.add("move", "Move one square", self.move, self.can_move(target, player))
+        res.add("capture", "Capture a piece", self.capture, self.can_capture(target, player))
+        res.add("place", "Place a Knight", self.place, self.game.can_place(self, target, player))
+        return res
+    
+
+    def can_move(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Knight moves one square at a time, either orthogonally (up, down, left, right) or diagonally.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
+        if not target.coordinate in self.coordinate.get_adjacent_coordinates():
+            return BoolWithReason(f"{self} can only move one square at a time")
+
+        return self.game.can_move(self, target, player)
 
 
-    def can_capture(self, to:Coordinate) -> BoolWithReason:
-        '''The Knight can capture any piece it lands on during its move.
-        '''
-        base = super().can_capture(to)
-        if not base:
-            return base
+    def capture(self, target, player):
+        # The Knight takes the place of the captured piece.
+        super().capture(target, player)
+        self.move(target, player)
+    
+
+    def can_capture(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Knight captures any piece it lands on during its move.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not the board with {target}")
         
-        can_move = self.can_move_to(to)
-        if not can_move:
-            return BoolWithReason(f"{can_move.reason}; Knights can only capture pieces they can move to.")
+        if not target.coordinate in self.coordinate.get_adjacent_coordinates():
+            return BoolWithReason(f"{self} cannot capture at {target}; it is more than one square away")
+
+        return self.game.can_capture(self, target, player)
+        
 
 
 class Turtle(Piece):
     layer = Layer.TERRAIN
     abbreviation = "🐢"
 
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
+
 
 class Rabbit(Piece):
     abbreviation = "🐇"
-    pass
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
 
 
 class Builder(Piece):
     abbreviation = "🙎"
-    pass
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
 
 
 class Bomber(Piece):
     abbreviation = "💣"
-    pass
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
 
 
 class Necromancer(Piece):
     abbreviation = "🧙‍♂️"
-    pass
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
 
 
 class Assassin(Piece):
     abbreviation = "🗡️"
-    pass
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList()
 
 
 all_pieces = [
@@ -1230,6 +1394,7 @@ all_pieces = [
     ]
 
 
+
 class Land(Entity):
     '''A land entity. Most pieces are placed on tiles with land.
     '''
@@ -1237,7 +1402,31 @@ class Land(Entity):
     layer = Layer.TERRAIN
 
 
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList()
+        res.add("place", "Place a land tile", self.place, self.can_place(target, player))
+        return res
+    
+
+    def can_place(self, target:Tile, player:Player) -> BoolWithReason:
+
+        is_adjacent_to_land = any([tile.has_type(Land) for tile in target.get_adjacent_tiles()])
+        board_has_no_land = len(self.game.board.where(Land)) == 0
+
+        if not (is_adjacent_to_land or board_has_no_land):
+            return BoolWithReason("Land tile must be placed adjacent to another land tile")
+
+        return self.game.can_place(self, target, player)
+
+
+
 class Citadel(Entity):
     '''A citadel. Citadels spawn pieces. Capturing a citadel is the primary goal of the game.
     '''
     abbreviation = "⛃"
+
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList()
+        res.add("place", "Place a Citadel", self.place, self.game.can_place(self, target, player))
+
+        return res
