@@ -1,8 +1,9 @@
 from __future__ import annotations
-from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type
+from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type, TypedDict
 from typing import Callable
 from abc import abstractmethod, ABC
 from enum import Enum
+import json
 
 
 class BoolWithReason():
@@ -57,6 +58,17 @@ class Coordinate(NamedTuple):
     '''A coordinate on the board.'''
     x: int
     y: int
+
+
+    def to_json(self) -> str:
+        return f"{self.x},{self.y}"
+    
+
+    @classmethod
+    def from_json(cls, json_data:str) -> 'Coordinate':
+        x, y = json_data.split(',')
+        return cls(int(x), int(y))
+    
 
     def get_adjacent_coordinates(self, orthagonal:bool=True, diagonal:bool=True) -> list['Coordinate']:
         '''Get the coordinates adjacent to this coordinate.
@@ -140,12 +152,12 @@ class Game():
         self.lands_per_player:int = lands_per_player
         self.personal_pieces_per_player:int = personal_pieces_per_player
         self.community_pieces_per_player:int = community_pieces_per_player
+        self.citadels_per_player:int = 1
         self.players:list[Player] = []
         self.board = Board(self)
         self.turn:int = 0
         self.community_pool:EntityList[Piece] = EntityList(self, name='Community Pool')
         self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
-        self.citadels_per_player:int = 1
 
         for i in range(number_of_players):
             new_player = Player(f"Player {i}", self)
@@ -160,6 +172,56 @@ class Game():
             for player in self.players:
                 citadel = Citadel(player.personal_stash, player, player)
                 player.personal_stash.append(citadel)
+
+    
+    class GameJson(TypedDict):
+        lands_per_player: int
+        personal_pieces_per_player: int
+        community_pieces_per_player: int
+        citadels_per_player: int
+        players: list[Player.PlayerJson]
+        board: Board.BoardJson
+        turn: int
+        community_pool: EntityList.EntityListJson
+        graveyard: EntityList.EntityListJson
+
+    
+    def to_json(self) -> GameJson:
+        '''Convert the game to JSON.
+        '''
+        return {
+            'lands_per_player': self.lands_per_player,
+            'personal_pieces_per_player': self.personal_pieces_per_player,
+            'community_pieces_per_player': self.community_pieces_per_player,
+            'citadels_per_player': self.citadels_per_player,
+            'players': [player.to_json() for player in self.players],
+            'board': self.board.to_json(),
+            'turn': self.turn,
+            'community_pool': self.community_pool.to_json(),
+            'graveyard': self.graveyard.to_json(),
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:GameJson):
+        '''Load the game from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+        '''
+        game = cls(
+            len(json_data['players']),
+            json_data['lands_per_player'],
+            json_data['personal_pieces_per_player'],
+            json_data['community_pieces_per_player'],
+            )
+        game.citadels_per_player = json_data['citadels_per_player']
+        game.players = [Player.from_json(player_data, game) for player_data in json_data['players']]
+        game.board = Board.from_json(json_data['board'], game)
+        game.turn = json_data['turn']
+        game.community_pool = EntityList.from_json(json_data['community_pool'], game)
+        game.graveyard = EntityList.from_json(json_data['graveyard'], game)
+        return game
 
 
     @property
@@ -322,10 +384,40 @@ class Player():
         Args:
             game: The game this player is in.
         '''
+        self.name:str = name
         self.personal_stash:EntityList['Piece'] = EntityList(game, name=f"{name}'s Personal Stash")
         self.game:Game = game
-        self.name:str = name
         self.rotation:int = 0
+    
+
+    class PlayerJson(TypedDict):
+        name: str
+        personal_stash: EntityList.EntityListJson
+        rotation: int
+    
+
+    def to_json(self) -> dict:
+        '''Convert the player to JSON.
+        '''
+        return {
+            'name': self.name,
+            'personal_stash': self.personal_stash.to_json(),
+            'rotation': self.rotation,
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:dict, game:Game) -> 'Player':
+        '''Load the player from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this player is in.
+        '''
+        player = cls(json_data['name'], game)
+        player.personal_stash = EntityList.from_json(json_data['personal_stash'], game)
+        player.rotation = json_data['rotation']
+        return player
 
     
     @property
@@ -552,6 +644,38 @@ class Board(dict[Coordinate, 'Tile']):
         super().__init__()
         self.name = name
         self.game:Game = game
+    
+
+    class BoardJson(TypedDict):
+        name: str
+        tiles: dict[tuple[int, int], Tile.EntityListJson]
+    
+
+    def to_json(self) -> dict:
+        '''Convert the board to JSON.
+        '''
+        return {
+            'name': self.name,
+            'tiles': {coordinate.to_json(): tile.to_json() for coordinate, tile in self.items()},
+            }
+
+
+    @classmethod
+    def from_json(cls, json_data:dict, game:Game) -> 'Board':
+        '''Load the board from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this board is in.
+        '''
+        board = cls(game, json_data['name'])
+        for coordinate, tile_data in json_data['tiles'].items():
+            coordinate = Coordinate.from_json(coordinate)
+            tile:Tile = Tile.from_json(tile_data, board)
+            tile.coordinate = coordinate
+            board[coordinate] = tile
+        return board
+
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -830,6 +954,41 @@ class EntityList(list, Generic[T]):
         self.name = name
         self.game = game
 
+    
+    class EntityListJson(TypedDict):
+        name: str
+        entities: list[Entity.EntityJson]
+
+
+    def to_json(self) -> EntityListJson:
+        '''Convert the entity list to JSON.
+        '''
+        return {
+            'name': self.name,
+            'entities': [entity.to_json() for entity in self]
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:EntityListJson, game:Game) -> 'EntityList':
+        '''Load the entity list from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this entity list is in.
+        '''
+        self = cls(game)
+        self.name = json_data['name']
+        entities = []
+        for entity_data in json_data['entities']:
+            entity_type = entity_data['type']
+            created_by = next((player for player in game.players if player.name == entity_data['created_by']), None)
+            owner = next((player for player in game.players if player.name == entity_data['owner']), None)
+            entity = globals()[entity_type](self, created_by, owner)
+            entities.append(entity)
+        self.extend(entities)
+        return self
+
 
     def __iter__(self) -> Iterator[T]:
         '''Iterate over the entities in the collection.
@@ -950,6 +1109,43 @@ class Tile(EntityList):
         super().__init__(board.game, name=f"{board.name}{coordinate}")
         self.board = board
         self.coordinate = coordinate
+    
+
+    class TileJson(TypedDict):
+        name: str
+        coordinate: str
+        entities: list[Entity.EntityJson]
+    
+
+    def to_json(self) -> TileJson:
+        '''Convert the tile to JSON.
+        '''
+        return {
+            'name': self.name,
+            'coordinate': self.coordinate.to_json(),
+            'entities': [entity.to_json() for entity in self],
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:TileJson, board:Board) -> 'EntityList':
+        '''Load the entity list from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this entity list is in.
+        '''
+        self = cls(board, Coordinate.from_json(json_data['coordinate']))
+        self.name = json_data['name']
+        entities = []
+        for entity_data in json_data['entities']:
+            entity_type = entity_data['type']
+            created_by = next((player for player in self.game.players if player.name == entity_data['created_by']), None)
+            owner = next((player for player in self.game.players if player.name == entity_data['owner']), None)
+            entity = globals()[entity_type](self, created_by, owner)
+            entities.append(entity)
+        self.extend(entities)
+        return self
     
 
     def __hash__(self) -> int:
@@ -1098,6 +1294,22 @@ class Entity(ABC):
         self.owner:Player|None = owner
         self.location:EntityList = location
         self.game:Game = location.game
+    
+
+    class EntityJson(TypedDict):
+        type: str
+        created_by: str|None
+        owner: str|None
+
+
+    def to_json(self) -> EntityJson:
+        '''Convert the entity to JSON.
+        '''
+        return {
+            'type': self.__class__.__name__,
+            'created_by': self.created_by.name if self.created_by else None,
+            'owner': self.owner.name if self.owner else None,
+            }
     
 
     def __str__(self) -> str:
@@ -1294,7 +1506,7 @@ class Bird(Piece):
     
 
     def capture(self, target, player):
-        # The Bird takes the place of the captured piece.
+        # The Bird takes the place of the captured piece when it captures.
         super().capture(target, player)
         self.move(target, player)
 

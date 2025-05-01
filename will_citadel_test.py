@@ -257,7 +257,7 @@ def test_move_pieces():
     assert player0knight in game.board[Coordinate(0, 0)], "Player 0's knight was not moved to the correct tile."
     assert player0knight.location.coordinate == Coordinate(0, 0), "Player 0's knight's location was not updated correctly."
     assert player0knight not in game.board[Coordinate(1, 0)], "Player 0's knight was not removed from the previous tile."
-    
+
 
 def test_capture_pieces():
     game = ExampleGame().setup_full_game()
@@ -282,7 +282,7 @@ def test_capture_pieces():
 
 def test_entity_list_where():
     game = Game()
-    el = EntityList(game, 'original')
+    el = EntityList(game)
     added_knight = Knight(el)
     el.append(added_knight)
     assert added_knight.location == el, "The knight's location was not set to the EntityList when added."
@@ -291,3 +291,59 @@ def test_entity_list_where():
     assert added_knight == found_knight, "The knight added to the EntityList was not found by the where method."
     assert added_knight.location == found_knight.location, "The knight's location was not preserved when added to the EntityList."
     assert found_knight.location == el, "The knight's location was not set to the EntityList when added."
+
+
+def test_entity_list_json():
+    game = Game()
+    el = EntityList(game, name='original')
+    added_knight = Knight(el)
+    el.append(added_knight)
+
+    json_data = el.to_json()
+    assert json_data == {
+        'name': 'original',
+        'entities': [added_knight.to_json()]
+    }, "The JSON representation of the EntityList is not correct."
+
+    new_el = EntityList.from_json(json_data, game)
+    assert new_el.name == el.name, "The name of the new EntityList is not correct."
+    assert len(new_el) == len(el), "The number of entities in the new EntityList is not correct."
+    assert new_el[0].to_json() == el[0].to_json(), "The entity in the new EntityList is not the same as the original."
+    assert new_el[0].location == new_el, "The entity's location in the new EntityList is not correct."
+
+
+def test_board_json():
+    game = Game()
+    board = game.board
+    land = game.players[0].personal_stash.where(Land)[0]
+    game.players[0].place(land, Coordinate(0, 0))
+    board_json = board.to_json()
+
+    assert board_json == {
+        'name': 'main',
+        'tiles': {
+            '0,0': board[Coordinate(0, 0)].to_json(),
+        },
+    }, "The JSON representation of the board is not correct."
+
+    new_board = Board.from_json(board_json, game)
+    assert new_board.name == board.name, "The name of the new board is not correct."
+    assert len(new_board) == len(board), "The number of tiles in the new board is not correct."
+    assert new_board[Coordinate(0, 0)].to_json() == board[Coordinate(0, 0)].to_json(), "The tile in the new board is not the same as the original."
+
+
+def test_game_json():
+    game = ExampleGame().setup_full_game()
+    game_json = game.to_json()
+
+    new_game = Game.from_json(game_json)
+
+    assert new_game.players[0].name == game.players[0].name, "The name of the first player in the new game is not correct."
+    assert new_game.board.name == game.board.name, "The name of the board in the new game is not correct."
+    assert len(new_game.players[0].personal_stash) == len(game.players[0].personal_stash), "The number of entities in the first player's personal stash in the new game is not correct."
+    assert len(new_game.players[0].community_entities) == len(game.players[0].community_entities), "The number of entities in the first player's community entities in the new game is not correct."
+    assert len(new_game.community_pool) == len(game.community_pool), "The number of entities in the community pool in the new game is not correct."
+    assert new_game.board[Coordinate(0, 0)].to_json() == game.board[Coordinate(0, 0)].to_json(), "The tile in the new board is not the same as the original."
+    assert new_game.board.where(Knight)[0].to_json() == game.board.where(Knight)[0].to_json(), "The knight in the new board is not the same as the original."
+
+
