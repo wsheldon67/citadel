@@ -919,6 +919,21 @@ class Board(dict[Coordinate, 'Tile']):
         return Vector(self, start, end)
     
 
+    def get_equivalent_entity(self, entity:Entity) -> Entity|None:
+        '''Get the equivalent entity on the board.
+
+        The equivalent entity is an entity of the same type, coordinate, and owner.
+
+        Args:
+            entity: The entity to get the equivalent of.
+        '''
+
+        for tile in self.values():
+            for e in tile:
+                if isinstance(e, type(entity)) and e.coordinate == entity.coordinate and e.owner == entity.owner:
+                    return e
+        return None
+
 
 class Vector():
     '''An object that represents two coordinates on the board, where one of them is the starting coordinate.'''
@@ -1284,6 +1299,13 @@ class Tile(EntityList):
             abbreviation = " "
             rotation = 0
         return color, abbreviation, str(rotation)
+    
+
+    @property
+    def color(self) -> str:
+        '''The color of the tile.
+        '''
+        return self.short_html[0]
 
 
 
