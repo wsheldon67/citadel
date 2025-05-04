@@ -167,6 +167,7 @@ class Game():
         self.community_pool:EntityList[Piece] = EntityList(self, name='Community Pool')
         #: The pieces that have been captured.
         self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
+        
 
         for i in range(number_of_players):
             new_player = Player(f"Player {i}", self)
@@ -654,6 +655,7 @@ class Board(dict[Coordinate, 'Tile']):
         super().__init__()
         self.name = name
         self.game:Game = game
+        self.default_tile_color = "#87CEEB"
     
 
     class BoardJson(TypedDict):
@@ -1286,7 +1288,7 @@ class Tile(EntityList):
         if terrain_layer:
             color = terrain_layer.color
         else:
-            color = "#87CEEB"
+            color = self.board.default_tile_color
         
         piece_layer = self.get_by_layer(Layer.PIECE)
         if piece_layer:
