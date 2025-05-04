@@ -1413,6 +1413,21 @@ class Entity(ABC):
             player: The player moving the entity.
         '''
         self.game.move(self, target, player)
+    
+
+    def get_tiles_by_action(self, action_name:str) -> list[Tile]:
+        '''Get the tiles that can be used with the given action.
+
+        Args:
+            action_name: The name of the action to get the tiles for.
+        '''
+        tiles = []
+        for tile in self.game.board.values():
+            actions = self.actions(tile, self.owner)
+            if action_name in actions:
+                if actions[action_name].can_use:
+                    tiles.append(tile)
+        return tiles
 
 
 class Action():

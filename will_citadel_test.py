@@ -347,3 +347,14 @@ def test_game_json():
     assert new_game.board.where(Knight)[0].to_json() == game.board.where(Knight)[0].to_json(), "The knight in the new board is not the same as the original."
 
 
+def test_get_tiles_by_action():
+    game = ExampleGame().setup_full_game()
+    player0, player1 = game.players
+
+    player0knight:Knight = game.board.where(Knight, owner=player0)[0]
+    player1bird:Bird = game.board.where(Bird, owner=player1)[0]
+
+    assert len(player0knight.get_tiles_by_action('move')) == 3, "The number of tiles for the move action is not correct."
+    assert len(player1bird.get_tiles_by_action('capture')) == 1, "The number of tiles for the capture action is not correct."
+
+    assert len(player0knight.get_tiles_by_action('place')) == 0, "The number of tiles for the place action is not correct."
