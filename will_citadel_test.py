@@ -53,10 +53,10 @@ class ExampleGame():
         return self.game
     
     def setup_full_game(self) -> Game:
-        self.choose_personal_pieces()
-        self.choose_community_pieces()
         self.place_lands()
         self.place_citadels()
+        self.choose_personal_pieces()
+        self.choose_community_pieces()
         self.place_pieces()
         return self.game
 
