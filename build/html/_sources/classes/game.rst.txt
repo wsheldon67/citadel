@@ -11,9 +11,6 @@ This is the main class that contains everything needed to run a game. If you wan
     :undoc-members:
 
 
-Related
-=======
-
 .. autoclass:: will_citadel.GamePhase
     :members:
     :undoc-members:

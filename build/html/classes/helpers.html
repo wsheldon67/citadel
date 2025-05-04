@@ -14,6 +14,7 @@
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Piece" href="piece.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
   
@@ -114,6 +115,28 @@
 </dd></dl>
 
 </section>
+<section id="vector">
+<h1>Vector<a class="headerlink" href="#vector" title="Link to this heading">¶</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="will_citadel.Vector">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">will_citadel.</span></span><span class="sig-name descname"><span class="pre">Vector</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">board</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Board</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Coordinate</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Coordinate</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#will_citadel.Vector" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>An object that represents two coordinates on the board, where one of them is the starting coordinate.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="will_citadel.Vector.is_straight">
+<span class="sig-name descname"><span class="pre">is_straight</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#will_citadel.Vector.is_straight" title="Link to this definition">¶</a></dt>
+<dd><p>Check if the vector is a straight line.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="will_citadel.Vector.is_diagonal">
+<span class="sig-name descname"><span class="pre">is_diagonal</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="headerlink" href="#will_citadel.Vector.is_diagonal" title="Link to this definition">¶</a></dt>
+<dd><p>Check if the vector is a diagonal line.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
 
 
           </div>
@@ -141,22 +164,35 @@
     </div>
 </search>
 <script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="game.html">Game</a></li>
-<li class="toctree-l1"><a class="reference internal" href="game.html#related">Related</a></li>
 <li class="toctree-l1"><a class="reference internal" href="entity.html">Entity</a></li>
-<li class="toctree-l1"><a class="reference internal" href="entity.html#related">Related</a></li>
 <li class="toctree-l1"><a class="reference internal" href="entity_list.html">Entity List</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tile.html">Tile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="board.html">Board</a></li>
 <li class="toctree-l1"><a class="reference internal" href="coordinate.html">Coordinate</a></li>
 <li class="toctree-l1"><a class="reference internal" href="player.html">Player</a></li>
+<li class="toctree-l1"><a class="reference internal" href="piece.html">Piece</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Helpers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="#boolwithreason">BoolWithReason</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#will_citadel.BoolWithReason"><code class="docutils literal notranslate"><span class="pre">BoolWithReason</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#rectangle">Rectangle</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#will_citadel.Rectangle"><code class="docutils literal notranslate"><span class="pre">Rectangle</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#vector">Vector</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#will_citadel.Vector"><code class="docutils literal notranslate"><span class="pre">Vector</span></code></a></li>
+</ul>
+</li>
 </ul>
 
 <div class="relations">
 <h3>Related Topics</h3>
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="piece.html" title="previous chapter">Piece</a></li>
   </ul></li>
 </ul>
 </div>

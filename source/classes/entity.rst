@@ -12,9 +12,6 @@ An Entity is roughly equivalent to the phyiscal wooden game tokens. All Pieces, 
     :show-inheritance:
 
 
-Related
-=======
-
 .. autoclass:: will_citadel.Layer
     :members:
     :show-inheritance:

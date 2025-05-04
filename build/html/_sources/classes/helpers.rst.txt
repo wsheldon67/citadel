@@ -19,3 +19,13 @@ Rectangle
    :show-inheritance:
    :undoc-members:
    :inherited-members:
+
+
+Vector
+======
+
+.. autoclass:: will_citadel.Vector
+   :members:
+   :show-inheritance:
+   :undoc-members:
+   :inherited-members:

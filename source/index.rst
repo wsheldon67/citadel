@@ -19,4 +19,5 @@ I tried to use the same language as the rules as much as possible, but I did mak
    classes/board
    classes/coordinate
    classes/player
+   classes/piece
    classes/helpers
