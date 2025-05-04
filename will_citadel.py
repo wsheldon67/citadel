@@ -47,9 +47,9 @@ class PlacementError(ActionError):
 
 class GamePhase(Enum):
     '''The phase of the game.'''
-    PIECE_SELECTION = 0
-    LAND_PLACEMENT = 1
-    CITADEL_PLACEMENT = 2
+    LAND_PLACEMENT = 0
+    CITADEL_PLACEMENT = 1
+    PIECE_SELECTION = 2
     BATTLE = 3
     END = 4
 
@@ -250,12 +250,12 @@ class Game():
     def phase(self) -> GamePhase:
         '''The current phase of the game.
         '''
-        if not all([player.is_done_choosing_pieces for player in self.players]):
-            return GamePhase.PIECE_SELECTION
         if not all([player.is_done_placing_lands for player in self.players]):
             return GamePhase.LAND_PLACEMENT
         if not all([player.is_done_placing_citadels for player in self.players]):
             return GamePhase.CITADEL_PLACEMENT
+        if not all([player.is_done_choosing_pieces for player in self.players]):
+            return GamePhase.PIECE_SELECTION
         if not self.winner:
             return GamePhase.BATTLE
         return GamePhase.END
