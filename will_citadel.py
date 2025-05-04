@@ -627,6 +627,7 @@ class Player():
             raise ActionError(can_perform.reason)
         action = entity.actions(target, self)[action_name]
         action.execute(target, self)
+        entity.game.end_turn()
     
 
     def place(self, entity:'Entity'|Type['Entity'], target:Coordinate|Tile|Entity):
