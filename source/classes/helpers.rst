@@ -1,0 +1,31 @@
+
+
+Helpers
+=======
+
+BoolWithReason
+==============
+
+.. autoclass:: will_citadel.BoolWithReason
+   :members:
+   :show-inheritance:
+
+
+Rectangle
+=========
+
+.. autoclass:: will_citadel.Rectangle
+   :members:
+   :show-inheritance:
+   :undoc-members:
+   :inherited-members:
+
+
+Vector
+======
+
+.. autoclass:: will_citadel.Vector
+   :members:
+   :show-inheritance:
+   :undoc-members:
+   :inherited-members:

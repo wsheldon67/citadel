@@ -149,14 +149,23 @@ class Game():
             personal_pieces_per_player: The number of personal pieces each player starts with.
             community_pieces_per_player: The number of community pieces each player may choose.
         '''
+        #: The number of lands each player places during the LAND_PLACEMENT phase.
         self.lands_per_player:int = lands_per_player
+        #: The number of personal pieces each chooses during the PIECE_SELECTION phase.
         self.personal_pieces_per_player:int = personal_pieces_per_player
+        #: The number of community pieces each chooses during the PIECE_SELECTION phase.
         self.community_pieces_per_player:int = community_pieces_per_player
+        #: The number of citadels each player places during the CITADEL_PLACEMENT phase.
         self.citadels_per_player:int = 1
+        #: The players in the game.
         self.players:list[Player] = []
+        #: The main game board.
         self.board = Board(self)
+        #: The current turn. This number should continuously increase; it does not reset between rounds.
         self.turn:int = 0
+        #: The pieces that are available to any player to place onto a board.
         self.community_pool:EntityList[Piece] = EntityList(self, name='Community Pool')
+        #: The pieces that have been captured.
         self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
 
         for i in range(number_of_players):
