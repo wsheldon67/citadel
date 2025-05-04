@@ -712,11 +712,19 @@ class Board(dict[Coordinate, 'Tile']):
         Args:
             coordinates: The coordinates to get the tiles at.
         '''
-    def __getitem__(self, coordinate):
+    def __getitem__(self, coordinate:list[Coordinate|tuple[int, int]]|Coordinate|tuple[int, int]):
         if isinstance(coordinate, list):
-            return [self.get(coord, Tile(self, coord)) for coord in coordinate]
+            res = []
+            for coord in coordinate:
+                if not isinstance(coord, Coordinate):
+                    coord = Coordinate(*coord)
+                res.append(self.get(coord, Tile(self, coord)))
+            return res
         elif isinstance(coordinate, Coordinate):
             return super().get(coordinate, Tile(self, coordinate))
+        elif isinstance(coordinate, tuple):
+            coord = Coordinate(*coordinate)
+            return super().get(coord, Tile(self, coord))
         else:
             raise TypeError(f"Coordinate must be a Coordinate or list of Coordinates, not {type(coordinate)}.")
         

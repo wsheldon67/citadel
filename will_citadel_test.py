@@ -358,3 +358,12 @@ def test_get_tiles_by_action():
     assert len(player1bird.get_tiles_by_action('capture')) == 1, "The number of tiles for the capture action is not correct."
 
     assert len(player0knight.get_tiles_by_action('place')) == 0, "The number of tiles for the place action is not correct."
+
+
+def test_get_tile_by_tuple():
+    game = ExampleGame().setup_full_game()
+    
+    tile = game.board[(0, 0)]
+
+    assert tile.coordinate == Coordinate(0, 0), "The tile's coordinate is not correct."
+    assert tile == game.board[Coordinate(0, 0)], "The tile is not the same as the one retrieved by the Coordinate object."
