@@ -95,7 +95,6 @@ def test_choose_personal_piece(game:Game|None=None) -> Game:
     assert len(player1.personal_stash.where(Bird)) == 2
     assert len(player1.personal_stash.where(Rabbit)) == 1
 
-    return game
 
 
 def test_choose_community_pieces(game:Game|None=None) -> Game:
@@ -188,15 +187,75 @@ def test_place_land(game:Game|None=None):
     assert game.board[Coordinate(2, 2)].is_water
 
 
-def test_place_citadels(game:Game|None=None):
-    if game is None:
-        game = Game(lands_per_player=3)
-        test_place_land(game)
+def test_copy_entity_list():
+    example = ExampleGame()
+    example.place_lands()
+    game = example.game
 
-    player0, player1 = game.players
+    ps = game.players[0].personal_stash
+    new_ps = ps.copy()
+    assert new_ps.name == ps.name
+    assert len(new_ps) == len(ps)
+    assert new_ps[0].to_json() == ps[0].to_json()
+    assert new_ps[0].owner.name == ps[0].owner.name
+
+
+def test_copy_board():
+    example = ExampleGame()
+    example.place_lands()
+    game = example.game
+
+    new_board = game.board.copy()
+    assert new_board.name == game.board.name
+    assert len(new_board) == len(game.board)
+    assert new_board[Coordinate(0, 0)].to_json() == game.board[Coordinate(0, 0)].to_json()
+    assert new_board[Coordinate(0, 0)].coordinate == game.board[Coordinate(0, 0)].coordinate
+
+    land = game.board.where(Land)[0]
+
+    new_land = game.board.get_equivalent_entity(land)
+
+    assert new_land is not None, "The new land was not found in the new board."
+    assert new_land.coordinate == land.coordinate
+    assert new_land.owner == land.owner
+
+
+def test_copy_game():
+    example = ExampleGame()
+    example.place_lands()
+    game = example.game
+
+    new_game = game.copy()
+
+    assert new_game.board.name == game.board.name
+    assert len(new_game.board) == len(game.board)
+    assert len(new_game.players) == len(game.players)
+    assert new_game.players[0].name == game.players[0].name
+    assert type(new_game.graveyard) == type(game.graveyard)
+
+    land = game.board.where(Land)[0]
+    new_land = new_game.board.get_equivalent_entity(land)
+
+    assert new_land is not None, "The new land was not found in the new game."
+    assert new_land.coordinate == land.coordinate
+    assert new_land.owner.name == land.owner.name
+    assert new_land is not land, "The new land is the same as the old land; should be a different instance."
+
+
+def test_place_citadels():
+    example = ExampleGame()
+    example.place_lands()
+
+    player0, player1 = example.game.players
 
     player0.perform_action(Citadel, 'place', Coordinate(1, 0))
     assert player0.is_done_placing_citadels
+    try:
+        player1.perform_action(Citadel, 'place', Coordinate(1, 4))
+    except ActionError as e:
+        assert "connected" in str(e)
+    else:
+        assert False, "Player 1 was allowed to place a Citadel not connected to the other citadel; should have thrown an error."
     player1.perform_action(Citadel, 'place', Coordinate(0, 3))
     assert player1.is_done_placing_citadels
 
@@ -345,6 +404,26 @@ def test_game_json():
     assert len(new_game.community_pool) == len(game.community_pool), "The number of entities in the community pool in the new game is not correct."
     assert new_game.board[Coordinate(0, 0)].to_json() == game.board[Coordinate(0, 0)].to_json(), "The tile in the new board is not the same as the original."
     assert new_game.board.where(Knight)[0].to_json() == game.board.where(Knight)[0].to_json(), "The knight in the new board is not the same as the original."
+
+
+def test_knight_can_move():
+    game = ExampleGame().setup_full_game()
+    player0, player1 = game.players
+
+    player0knight:Knight = game.board.where(Knight, owner=player0)[0]
+    player1bird:Bird = game.board.where(Bird, owner=player1)[0]
+
+    to00 = player0knight.can_move(game.board[Coordinate(0, 0)], player0)
+    assert to00, "Player 0's knight was not allowed to move to (0, 0) when it should have been."
+
+    to01 = player0knight.can_move(game.board[Coordinate(0, 1)], player0)
+    assert to01
+
+    to20 = player0knight.can_move(game.board[Coordinate(2, 0)], player0)
+    assert not to20, "Player 0's knight was allowed to move to (2, 0) when it should not have been."
+
+    to11 = player0knight.can_move(game.board[Coordinate(1, 1)], player0)
+    assert not to11, "Player 0's knight was allowed to move to (1, 1) when it should not have been."
 
 
 def test_get_tiles_by_action():
