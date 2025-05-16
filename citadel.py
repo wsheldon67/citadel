@@ -1,1295 +1,1848 @@
-import pygame
-from collections import deque
-import math
-
-# ------------------ Pygame Setup ------------------
-pygame.init()
-WIDTH, HEIGHT = 1000, 700  # window size
-UI_HEIGHT = int(HEIGHT * 0.15)
-TILE_SIZE = 40
-FONT = pygame.font.Font(None, 30)
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Citadel - Board Setup")
-
-REMOVAL_HEIGHT = 100
-# Zones for piece selection phase
-personal_area = pygame.Rect(0, 0, int(WIDTH * 0.25), HEIGHT - REMOVAL_HEIGHT)
-offered_area = pygame.Rect(int(WIDTH * 0.25), 0, int(WIDTH * 0.5), HEIGHT - REMOVAL_HEIGHT)
-community_area = pygame.Rect(int(WIDTH * 0.75), 0, int(WIDTH * 0.25), HEIGHT - REMOVAL_HEIGHT)
-removal_zone = pygame.Rect(0, HEIGHT - REMOVAL_HEIGHT, WIDTH, REMOVAL_HEIGHT)
-graveyard_area = pygame.Rect(0, 0, 150, HEIGHT)
-
-# UI Areas for Game Phase
-personal_stash_area = pygame.Rect(150, HEIGHT - 75, WIDTH - 300, 75)
-community_stash_area = pygame.Rect(WIDTH - 150, 0, 150, HEIGHT)
-
-# Game configuration parameters (defaults for both players)
-num_land_tiles = 5
-num_personal_pool = 3
-num_community_pool = 3
-max_stash_capacity = 3
-
-selection_message = ""
-finish_button_rect = pygame.Rect(0, 0, 0, 0)
-toggle_button_rect = pygame.Rect(WIDTH - 170, 10, 150, 40)
-
-# Offered pieces configuration (for piece selection)
-available_types = ["Bird", "Knight", "Turtle", "Rabbit", "Builder", "Bomber", "Necromancer", "Assassin"]
-offered_piece_width = 150
-offered_piece_height = 50
-padding_x = 20
-padding_y = 20
-num_columns = 2
-num_rows = math.ceil(len(available_types) / num_columns)
-total_width = num_columns * offered_piece_width + (num_columns + 1) * padding_x
-total_height = num_rows * offered_piece_height + (num_rows + 1) * padding_y
-start_x = offered_area.x + (offered_area.width - total_width) // 2 + padding_x
-start_y = offered_area.y + (offered_area.height - total_height) // 2 + padding_y
-
-offered_pieces = []
-for index, piece in enumerate(available_types):
-    col = index % num_columns
-    row = index // num_columns
-    rect = pygame.Rect(
-        start_x + col * (offered_piece_width + padding_x),
-        start_y + row * (offered_piece_height + padding_y),
-        offered_piece_width,
-        offered_piece_height
-    )
-    offered_pieces.append({"piece": piece, "rect": rect})
-
-# ------------------ Data Structures ------------------
-personal_stash = []    # Personal pieces chosen
-community_stash = []   # Community pieces chosen
-graveyard = []         # Pieces captured
-
-# ------------------ Colors ------------------
-WATER_COLOR = (0, 0, 128)
-LAND_COLOR = (34, 139, 34)
-CITADEL_COLOR = (255, 255, 0)
-GRID_COLOR = (255, 255, 255)
-TEXT_COLOR = (255, 255, 255)
-HIGHLIGHT_MOVE_COLOR = (255, 255, 0)    # Yellow
-HIGHLIGHT_CAPTURE_COLOR = (255, 0, 0)     # Red
-PLAYER1_COLOR = (255, 165, 0)  # Orange
-PLAYER2_COLOR = (128, 0, 128)  # Purple
-
-# ------------------ Game Variables ------------------
-piece_selection_done = False
-board = {}       # {(x, y): "L"}
-citadels = []    # List of citadel dicts, e.g. {"pos": (x, y), "owner": player}
-land_tiles_remaining = 10
-placing_land = True
-game_message = "Place land tiles."
-placed_pieces = {}   # {(x, y): {"type": piece, "owner": player}}
-selected_piece = None
-move_highlight_tiles = []      # Valid move tiles (for moving pieces)
-capture_highlight_tiles = []   # Capture move tiles
-current_player = 1
-choice_highlight_tiles = []
+from __future__ import annotations
+from typing import NamedTuple, Iterator, Generic, TypeVar, Literal, overload, Type, TypedDict
+from typing import Callable
+from abc import abstractmethod, ABC
+from enum import Enum
+import json
 
 
-# Center a 3x3 grid initially
-grid_center_x = WIDTH // 2 // TILE_SIZE
-grid_center_y = (HEIGHT - 100) // 2 // TILE_SIZE
-min_x, max_x = grid_center_x - 1, grid_center_x + 1
-min_y, max_y = grid_center_y - 1, grid_center_y + 1
+class BoolWithReason():
+    '''A string that can be used as a boolean with a reason.
+    '''
+    def __init__(self, value:Literal[True]|str):
+        '''Create a new BoolWithReason.
 
-# ------------------ Helper Functions ------------------
-def handle_mounted_turtle_selection(x, y):
-
-    piece = placed_pieces[(x, y)]
-    mount = piece.get("mounted")
-    if not mount:
-        return (x, y)  # fallback if not mounted
-    if piece["owner"] == mount["owner"]:
-        decision = prompt_user_message("Press 'T' for Turtle or 'M' for Mounted:")
-        if decision == "T":
-            return {"pos": (x, y), "piece": piece, "move_mode": "turtle_no_capture"}
-        elif decision == "M":
-            return {"pos": (x, y), "piece": piece, "move_mode": "mounted_normal"}
-    elif piece["owner"] == current_player and mount["owner"] != current_player:
-        return {"pos": (x, y), "piece": piece, "move_mode": "turtle_enemy_mount"}
-    elif piece["owner"] != current_player and mount["owner"] == current_player:
-        if mount["type"] == "Rabbit":
-            return {"pos": (x, y), "piece": piece, "move_mode": "mounted_rabbit"}
+        Args:
+            value: True, or a string that describes the reason for failure.
+        '''
+        if isinstance(value, str):
+            self.reason = value
+            self.value = False
         else:
-            return {"pos": (x, y), "piece": piece, "move_mode": "mounted_capture"}
-    else:
-        return (x, y)
-
-def prompt_user_message(message):
-    """
-    Display a modal prompt on the screen and wait for the user to press a key.
-    Press 'T' for Turtle or 'M' for Mounted.
-    """
-    prompt_rect = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 50, 300, 100)
-    pygame.draw.rect(screen, (0, 0, 0), prompt_rect)
-    pygame.draw.rect(screen, (255, 255, 255), prompt_rect, 2)
-    text_surface = FONT.render(message, True, (255, 255, 255))
-    text_rect = text_surface.get_rect(center=prompt_rect.center)
-    screen.blit(text_surface, text_rect)
-    pygame.display.flip()
+            self.reason = None
+            self.value = True
+        
+    def __bool__(self) -> bool:
+        return self.value
     
-    waiting = True
-    decision = None
-    while waiting:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_t:
-                    decision = "T"
-                    waiting = False
-                elif event.key == pygame.K_m:
-                    decision = "M"
-                    waiting = False
-    return decision
+    def __repr__(self) -> str:
+        return f"BoolWithReason({self.value or self.reason})"
 
 
-def prompt_turtle_choice(message):
-    """
-    Display a prompt asking the player to choose between using the Turtle or the Mounted piece.
-    Press 't' for Turtle or 'm' for Mounted.
-    """
-    prompt_rect = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 50, 300, 100)
-    pygame.draw.rect(screen, (0, 0, 0), prompt_rect)
-    pygame.draw.rect(screen, (255, 255, 255), prompt_rect, 2)
-    text_surface = FONT.render(message, True, (255, 255, 255))
-    text_rect = text_surface.get_rect(center=prompt_rect.center)
-    screen.blit(text_surface, text_rect)
-    pygame.display.flip()
+class Layer(Enum):
+    '''The layer of an entity.'''
+    TERRAIN = 0
+    PIECE = 1
+
+
+T = TypeVar('T', bound='Entity')
+
+
+class ActionError(Exception):
+    pass
+
+class PlacementError(ActionError):
+    pass
+
+
+class GamePhase(Enum):
+    '''The phase of the game.'''
+    LAND_PLACEMENT = 0
+    CITADEL_PLACEMENT = 1
+    PIECE_SELECTION = 2
+    BATTLE = 3
+    END = 4
+
+
+class Coordinate(NamedTuple):
+    '''A coordinate on the board.'''
+    x: int
+    y: int
+
+
+    def to_json(self) -> str:
+        return f"{self.x},{self.y}"
     
-    waiting = True
-    choice = None
-    while waiting:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_t:
-                    choice = "turtle"
-                    waiting = False
-                elif event.key == pygame.K_m:
-                    choice = "mounted"
-                    waiting = False
-    return choice
 
-
-def prompt_user(message):
-    """
-    Display a modal prompt on the screen and wait for the user to press a key.
-    Press 'C' for Capture or 'M' for Mount.
-    """
-    # Define a prompt rectangle centered on the screen.
-    prompt_rect = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 50, 300, 100)
-    # Draw a dark background for the prompt.
-    pygame.draw.rect(screen, (0, 0, 0), prompt_rect)
-    pygame.draw.rect(screen, (255, 255, 255), prompt_rect, 2)
-    # Render the prompt message.
-    text_surface = FONT.render(message, True, (255, 255, 255))
-    text_rect = text_surface.get_rect(center=prompt_rect.center)
-    screen.blit(text_surface, text_rect)
-    pygame.display.flip()
+    @classmethod
+    def from_json(cls, json_data:str) -> 'Coordinate':
+        x, y = json_data.split(',')
+        return cls(int(x), int(y))
     
-    waiting = True
-    decision = None
-    while waiting:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_c:
-                    decision = "Capture"
-                    waiting = False
-                elif event.key == pygame.K_m:
-                    decision = "Mount"
-                    waiting = False
-    return decision
+
+    def get_adjacent_coordinates(self, orthagonal:bool=True, diagonal:bool=True) -> list['Coordinate']:
+        '''Get the coordinates adjacent to this coordinate.
+
+        Args:
+            orthagonal: If True, include orthagonal coordinates.
+            diagonal: If True, include diagonal coordinates.
+        '''
+        if not orthagonal and not diagonal:
+            raise ValueError("At least one of orthagonal or diagonal must be True.")
+        coordinates = []
+        if orthagonal:
+            coordinates.append(Coordinate(self.x-1, self.y))
+            coordinates.append(Coordinate(self.x+1, self.y))
+            coordinates.append(Coordinate(self.x, self.y-1))
+            coordinates.append(Coordinate(self.x, self.y+1))
+        if diagonal:
+            coordinates.append(Coordinate(self.x-1, self.y-1))
+            coordinates.append(Coordinate(self.x-1, self.y+1))
+            coordinates.append(Coordinate(self.x+1, self.y-1))
+            coordinates.append(Coordinate(self.x+1, self.y+1))
+        return coordinates
+    
+    def __sub__(self, other:'Coordinate') -> 'Coordinate':
+        '''Subtract two coordinates.'''
+        return Coordinate(self.x - other.x, self.y - other.y)
+    
+    def __add__(self, other:'Coordinate') -> 'Coordinate':
+        '''Add two coordinates.'''
+        return Coordinate(self.x + other.x, self.y + other.y)
+
+    def __str__(self):
+        return f"({self.x}, {self.y})"
 
 
 
-def switch_player():
-    global current_player
-    current_player = 2 if current_player == 1 else 1
+class Rectangle(NamedTuple):
+    '''A rectangle on the board.'''
+    x_min: int
+    x_max: int
+    y_min: int
+    y_max: int
 
-def expand_board(x, y):
-    global min_x, max_x, min_y, max_y
-    if x <= min_x:
-        min_x = x - 1
-    if x >= max_x:
-        max_x = x + 1
-    if y <= min_y:
-        min_y = y - 1
-    if y >= max_y:
-        max_y = y + 1
+    @property
+    def width(self) -> int:
+        '''The width of the rectangle.'''
+        return self.x_max - self.x_min + 1
+    @property
+    def height(self) -> int:
+        '''The height of the rectangle.'''
+        return self.y_max - self.y_min + 1
+    
+    def add_margin(self, margin:int) -> Rectangle:
+        '''Add a margin to the rectangle, returning a larger rectangle.
 
-def is_adjacent(x, y):
-    adjacent_positions = [
-        (x-1, y), (x+1, y),
-        (x, y-1), (x, y+1),
-        (x-1, y-1), (x+1, y-1),
-        (x-1, y+1), (x+1, y+1)
-    ]
-    return any(pos in board for pos in adjacent_positions)
+        Args:
+            margin: The amount of margin to add.
+        '''
+        return Rectangle(
+            self.x_min - margin,
+            self.x_max + margin,
+            self.y_min - margin,
+            self.y_max + margin
+            )
 
-def place_land_tile(x, y):
-    global land_tiles_remaining, placing_land, game_message
-    if (x, y) in board:
-        return
-    if not board or is_adjacent(x, y):
-        board[(x, y)] = "L"
-        land_tiles_remaining -= 1
-        expand_board(x, y)
-        if land_tiles_remaining == 0:
-            placing_land = False
-            game_message = "All land tiles placed! Click to place Citadels."
-    else:
-        game_message = "Invalid placement! Land must touch existing land."
 
-def place_citadel(x, y):
-    global game_message, piece_selection_done, current_player
-    if (x, y) not in board or any(citadel["pos"] == (x, y) for citadel in citadels):
-        return
-    if len(citadels) == 0:
-        citadels.append({"pos": (x, y), "owner": current_player})
-        game_message = "First Citadel placed! Place the second Citadel."
-        switch_player()  # Switch so second citadel belongs to other player.
-    elif len(citadels) == 1:
-        if is_adjacent(x, y):  # Basic connectivity check.
-            citadels.append({"pos": (x, y), "owner": current_player})
-            game_message = "Both Citadels placed! Confirm board layout."
-            # Call confirmation function before moving to piece selection:
-            confirm_board_layout()
-            piece_selection_phase()
-            piece_selection_done = True
-            start_game_phase()
+
+class Game():
+    '''The whole game.
+    '''
+    _player_rotations = [90, 270, 0, 180]
+    def __init__(self, number_of_players:int=2, lands_per_player:int=5, personal_pieces_per_player:int=3, community_pieces_per_player:int=3):
+        '''Create a new game.
+
+        Args:
+            number_of_players: The number of players in the game.
+            lands_per_player: The number of lands per player.
+            personal_pieces_per_player: The number of personal pieces each player starts with.
+            community_pieces_per_player: The number of community pieces each player may choose.
+        '''
+        #: The number of lands each player places during the LAND_PLACEMENT phase.
+        self.lands_per_player:int = lands_per_player
+        #: The number of personal pieces each chooses during the PIECE_SELECTION phase.
+        self.personal_pieces_per_player:int = personal_pieces_per_player
+        #: The number of community pieces each chooses during the PIECE_SELECTION phase.
+        self.community_pieces_per_player:int = community_pieces_per_player
+        #: The number of citadels each player places during the CITADEL_PLACEMENT phase.
+        self.citadels_per_player:int = 1
+        #: The players in the game.
+        self.players:list[Player] = []
+        #: The main game board.
+        self.board = Board(self)
+        #: The current turn. This number should continuously increase; it does not reset between rounds.
+        self.turn:int = 0
+        #: The pieces that are available to any player to place onto a board.
+        self.community_pool:EntityList[Piece] = EntityList(self, name='Community Pool')
+        #: The pieces that have been captured.
+        self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
+        #: If true, skip validation checks.
+        self.validate_actions = True
+        
+
+        for i in range(number_of_players):
+            new_player = Player(f"Player {i}", self)
+            new_player.rotation = self._player_rotations[i]
+            self.players.append(new_player)
+
+        for i in range(self.lands_per_player):
+            for player in self.players:
+                land = Land(player.personal_stash, player)
+                player.personal_stash.append(land)
+        for i in range(self.citadels_per_player):
+            for player in self.players:
+                citadel = Citadel(player.personal_stash, player, player)
+                player.personal_stash.append(citadel)
+
+    
+    class GameJson(TypedDict):
+        lands_per_player: int
+        personal_pieces_per_player: int
+        community_pieces_per_player: int
+        citadels_per_player: int
+        players: list[Player.PlayerJson]
+        board: Board.BoardJson
+        turn: int
+        community_pool: EntityList.EntityListJson
+        graveyard: EntityList.EntityListJson
+
+    
+    def to_json(self) -> GameJson:
+        '''Convert the game to JSON.
+        '''
+        return {
+            'lands_per_player': self.lands_per_player,
+            'personal_pieces_per_player': self.personal_pieces_per_player,
+            'community_pieces_per_player': self.community_pieces_per_player,
+            'citadels_per_player': self.citadels_per_player,
+            'players': [player.to_json() for player in self.players],
+            'board': self.board.to_json(),
+            'turn': self.turn,
+            'community_pool': self.community_pool.to_json(),
+            'graveyard': self.graveyard.to_json(),
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:GameJson):
+        '''Load the game from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+        '''
+        game = cls(
+            len(json_data['players']),
+            json_data['lands_per_player'],
+            json_data['personal_pieces_per_player'],
+            json_data['community_pieces_per_player'],
+            )
+        game.citadels_per_player = json_data['citadels_per_player']
+        game.players = [Player.from_json(player_data, game) for player_data in json_data['players']]
+        game.board = Board.from_json(json_data['board'], game)
+        game.turn = json_data['turn']
+        game.community_pool = EntityList.from_json(json_data['community_pool'], game)
+        game.graveyard = EntityList.from_json(json_data['graveyard'], game)
+        return game
+
+
+    def copy(self) -> 'Game':
+        '''Create a copy of the game.
+
+        Returns:
+            A copy of the game.
+        '''
+        return self.from_json(json.loads(json.dumps(self.to_json())))
+        new_game = Game(
+            len(self.players),
+            self.lands_per_player,
+            self.personal_pieces_per_player,
+            self.community_pieces_per_player,
+            )
+        new_game.citadels_per_player = self.citadels_per_player
+        new_game.players = [player.copy() for player in self.players]
+        new_game.board = self.board.copy()
+        new_game.turn = self.turn
+        new_game.community_pool = self.community_pool.copy()
+        new_game.graveyard = self.graveyard.copy()
+        return new_game
+
+
+    E = TypeVar('E')
+
+    def get_equivalent(self, obj:E) -> E|None:
+        '''Get the equivalent object from the Game.
+
+        When a game is copied, this method can be used to get an object represented in the original.
+        '''
+        if isinstance(obj, Player):
+            for player in self.players:
+                if player.name == obj.name:
+                    return player
+        elif isinstance(obj, Entity):
+            in_board = self.board.get_equivalent_entity(obj)
+            if in_board:
+                return in_board
+            in_pool = self.community_pool.get_equivalent_entity(obj)
+            if in_pool:
+                return in_pool
+            in_graveyard = self.graveyard.get_equivalent_entity(obj)
+            if in_graveyard:
+                return in_graveyard
+            for player in self.players:
+                in_personal_stash = player.personal_stash.get_equivalent_entity(obj)
+                if in_personal_stash:
+                    return in_personal_stash
+        elif isinstance(obj, Tile):
+            return self.board[obj.coordinate]
         else:
-            game_message = "Invalid placement! Second Citadel must be adjacent."
+            raise TypeError(f"Object must be a Player or Entity, not {type(obj)}.")
 
-def is_valid_piece_placement(x, y, player, piece_type):
-    # For non-Turtle pieces, the tile must be land.
-    # Allow placement if the tile is unoccupied or if it is occupied by a Turtle.
-    if piece_type != "Turtle":
-        if (x, y) not in board:
-            return False
-        # Allow placement if a Turtle is already there (even if it belongs to the enemy);
-        # otherwise (if something else is there) it is invalid.
-        if (x, y) in placed_pieces and placed_pieces[(x, y)]["type"] != "Turtle":
-            return False
-    else:
-        # For Turtle pieces, only allow placement on water (no land tile) and ensure the square is unoccupied.
-        if (x, y) in placed_pieces or (x, y) in board:
-            return False
 
-    # The tile must be adjacent to at least one citadel owned by the current player.
-    adjacent_to_player = False
-    for citadel in citadels:
-        if citadel["owner"] == player:
-            cx, cy = citadel["pos"]
-            if abs(x - cx) <= 1 and abs(y - cy) <= 1:
-                adjacent_to_player = True
-                break
-    if not adjacent_to_player:
+    @property
+    def current_player(self) -> 'Player':
+        '''The player whose turn it is.
+        '''
+        return self.players[self.turn % len(self.players)]
+    
+
+    def end_turn(self):
+        '''End the current player's turn.
+        '''
+        self.turn += 1
+    
+
+    @property
+    def phase(self) -> GamePhase:
+        '''The current phase of the game.
+        '''
+        if not all([player.is_done_placing_lands for player in self.players]):
+            return GamePhase.LAND_PLACEMENT
+        if not all([player.is_done_placing_citadels for player in self.players]):
+            return GamePhase.CITADEL_PLACEMENT
+        if not all([player.is_done_choosing_pieces for player in self.players]):
+            return GamePhase.PIECE_SELECTION
+        if not self.winner:
+            return GamePhase.BATTLE
+        return GamePhase.END
+    
+
+    @property
+    def winner(self) -> Player|None:
+        '''The winner of the game, if any.
+        '''
+        has_citadels = [len(player.citadels) > 0 for player in self.players]
+        if sum(has_citadels) == 1:
+            return self.players[has_citadels.index(True)]
+        return None
+    
+
+    def _repr_html_(self) -> str:
+        return f"""<div>
+        {self.community_pool._repr_html_()}
+        <div style='display: flex; flex-direction: row;'>
+            {self.players[0]._repr_html_()}
+            {self.board._repr_html_()}
+            {self.players[1]._repr_html_()}
+        </div>
+        {self.graveyard._repr_html_()}
+        <p>Current Player: {self.current_player.name}</p>
+        <p>Phase: {self.phase.name}</p>
+        </div>"""
+    
+
+    def can_move(self, piece:'Piece', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if a piece can be moved to the given tile.
+
+        Args:
+            piece: The piece to move.
+            target: The tile to move the piece to.
+        '''
+        can_add_to_tile = self.board[target.coordinate].can_add(piece)
+        if not can_add_to_tile:
+            return BoolWithReason(f"cannot add {piece} to {target}: {can_add_to_tile.reason}")
+    
+        if piece.owner != player:
+            return BoolWithReason(f"Cannot move {piece}: not owned by player '{player.name}'.")
+
+        new_game = piece.simulate('move', target, player)
+        
+        if not new_game.board.citadels_are_connected:
+            return BoolWithReason(f"moving {piece} to {target} would disconnect citadels")
+
+        return BoolWithReason(True)
+
+
+    def move(self, piece:'Piece', target:'Tile', player:'Player'):
+        '''Move a piece to the given tile.
+
+        Args:
+            piece: The piece to move.
+            target: The tile to move the piece to.
+            player: The player moving the piece.
+        '''
+        if self.validate_actions:
+            can_move = self.can_move(piece, target, player)
+            if not can_move:
+                raise PlacementError(f"Cannot move {piece} to {target}: {can_move.reason}")
+        piece.location.remove(piece)
+        target.append(piece)
+    
+
+    def can_place(self, entity:'Entity', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if an entity can be placed on the given tile.
+
+        Args:
+            entity: The entity to place.
+            target: The tile to place the entity on.
+        '''
+        can_add_to_tile = self.board[target.coordinate].can_add(entity)
+        if not can_add_to_tile:
+            return BoolWithReason(f"cannot add {entity} to {target}: {can_add_to_tile.reason}")
+    
+        if not entity in player.placeable_entities:
+            return BoolWithReason(f"Player '{self}' does not have access to place {entity}.")
+    
+        if isinstance(entity, Piece) and not player.is_adjacent_to_citadel(target):
+            return BoolWithReason(f"Cannot place {entity} at {target}: not adjacent to any of player's citadels.")
+
+        return BoolWithReason(True)
+
+
+    def place(self, entity:'Entity', target:'Tile', player:'Player'):
+        '''Place an entity on the given tile.
+
+        Args:
+            entity: The entity to place.
+            target: The tile to place the entity on.
+        '''
+        if not isinstance(entity, Entity):
+            raise TypeError(f"Can only place an Entity, not {type(entity)}.")
+        if self.validate_actions:
+            can_place = self.can_place(entity, target, player)
+            if not can_place:
+                raise PlacementError(f"Cannot place {entity} on {target}: {can_place.reason}")
+        entity.owner = player
+        entity.location.remove(entity)
+        target.append(entity)
+
+
+    def can_capture(self, entity:'Entity', target:'Tile', player:'Player') -> BoolWithReason:
+        '''Check if an entity can capture another entity.
+
+        Args:
+            entity: The entity to capture with.
+            target: The tile to attempt capture on.
+            player: The player attempting the capture.
+        '''
+        if not target.where(Piece):
+            return BoolWithReason(f"{target} has no pieces to capture.")
+        
+        new_game = entity.simulate('capture', target, player)
+        if not new_game.board.citadels_are_connected:
+            return BoolWithReason(f"capture at {target} would disconnect citadels")
+
+        return BoolWithReason(True)
+    
+
+    def capture(self, entity:'Entity', target:'Tile', player:'Player'):
+        '''Capture an entity, sending it to the graveyard.'''
+        if self.validate_actions:
+            can_capture = self.can_capture(entity, target, player)
+            if not can_capture:
+                raise PlacementError(f"Cannot capture {target} with {entity}: {can_capture.reason}")
+        entity = target.where(Piece)[0]
+        self.graveyard.append(entity)
+        self.board.remove(entity)
+
+
+
+class Player():
+    '''A player in the game.
+    '''
+    def __init__(self, name:str, game:Game):
+        '''
+        Args:
+            game: The game this player is in.
+        '''
+        self.name:str = name
+        self.personal_stash:EntityList['Piece'] = EntityList(game, name=f"{name}'s Personal Stash")
+        self.game:Game = game
+        self.rotation:int = 0
+    
+
+    class PlayerJson(TypedDict):
+        name: str
+        personal_stash: EntityList.EntityListJson
+        rotation: int
+    
+
+    def to_json(self) -> dict:
+        '''Convert the player to JSON.
+        '''
+        return {
+            'name': self.name,
+            'personal_stash': self.personal_stash.to_json(),
+            'rotation': self.rotation,
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:dict, game:Game) -> 'Player':
+        '''Load the player from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this player is in.
+        '''
+        player = cls(json_data['name'], game)
+        player.personal_stash = EntityList.from_json(json_data['personal_stash'], game)
+        player.rotation = json_data['rotation']
+        return player
+
+
+    def copy(self) -> 'Player':
+        '''Create a copy of the player.
+
+        Returns:
+            A copy of the player.
+        '''
+        new_player = Player(self.name, self.game)
+        new_player.personal_stash = self.personal_stash.copy()
+        new_player.rotation = self.rotation
+        return new_player
+
+    
+    @property
+    def placeable_entities(self) -> EntityList['Entity']:
+        '''The entity lists this player can place from.
+        '''
+        return self.personal_stash + self.game.community_pool
+    
+
+    @property
+    def community_entities(self) -> 'EntityList[Piece]':
+        '''The pieces in the community pool that this player created.
+        '''
+        return self.game.community_pool.where(Piece, self)
+
+
+    @property
+    def is_done_choosing_personal_pieces(self) -> bool:
+        '''True if the player has chosen all of their personal pieces.
+        '''
+        personal_pieces = self.personal_stash.where(Piece)
+        return len(personal_pieces) >= self.game.personal_pieces_per_player
+
+
+    @property
+    def is_done_choosing_community_pieces(self) -> bool:
+        '''True if the player has chosen all of their community pieces.
+        '''
+        community_pieces = self.community_entities.where(Piece)
+        return len(community_pieces) >= self.game.community_pieces_per_player
+
+
+    @property
+    def is_done_choosing_pieces(self) -> bool:
+        '''True if the player has chosen all of their pieces.
+        '''
+        return self.is_done_choosing_personal_pieces and self.is_done_choosing_community_pieces
+
+
+    def choose_community_piece(self, piece:'Piece'|Type['Piece']):
+        '''Choose a piece for the community pool.
+        '''
+        if self.is_done_choosing_community_pieces:
+            raise ValueError(f"Players are not allowed to choose more than {self.game.community_pieces_per_player} pieces for the community pool. '{self.name}' has already chosen {len(self.community_entities)} community pieces.")
+        
+        if isinstance(piece, type):
+            piece = piece(self.game.community_pool, self)
+        
+        piece.created_by = self
+        self.game.community_pool.append(piece)
+
+    
+    def choose_personal_piece(self, piece:'Piece'|Type['Piece']):
+        '''Choose a piece for the personal stash.
+        '''
+        if self.is_done_choosing_personal_pieces:
+            raise ValueError(f"Players are not allowed to choose more than {self.game.personal_pieces_per_player} pieces for their personal stash. '{self.name}' has already chosen {len(self.personal_stash.where(Piece))} personal pieces.")
+        
+        if isinstance(piece, type):
+            piece = piece(self.personal_stash, self, self)
+        
+        piece.created_by = self
+        piece.owner = self
+        self.personal_stash.append(piece)
+
+
+    @property
+    def land_tiles(self) -> 'EntityList[Land]':
+        '''The land tiles this player has placed.
+        '''
+        player_lands = EntityList(self.game)
+        for tile in self.game.board.values():
+            if tile.land and tile.land.created_by == self:
+                player_lands.append(tile.land)
+        return player_lands
+    
+
+    @property
+    def is_done_placing_lands(self) -> bool:
+        '''True if the player has placed all of their lands.
+        '''
+        return len(self.land_tiles) >= self.game.lands_per_player
+    
+
+    @property
+    def citadels(self) -> 'EntityList[Citadel]':
+        '''The citadels this player has placed.
+        '''
+        return self.game.board.where(Citadel, owner=self)
+
+    
+    @property
+    def is_done_placing_citadels(self) -> bool:
+        '''True if the player has placed all of their citadels.
+        '''
+        return len(self.citadels) >= self.game.citadels_per_player
+
+    
+    def is_adjacent_to_citadel(self, to_test:Coordinate|Tile|Entity) -> bool:
+        '''Check if the given object is adjacent to a citadel belonging to this player.
+
+        Args:
+            to_test: The Coordinate, Tile, or Entity to check.
+        '''
+        if isinstance(to_test, Coordinate):
+            coordinate = to_test
+        elif isinstance(to_test, Tile):
+            coordinate = to_test.coordinate
+        elif isinstance(to_test, Entity):
+            coordinate = self.game.board.get_coordinate_of_entity(to_test)
+        for citadel in self.citadels:
+            citadel_coordinate = self.game.board.get_coordinate_of_entity(citadel)
+            if coordinate in citadel_coordinate.get_adjacent_coordinates():
+                return True
         return False
-
-    # Additionally, the tile must NOT be adjacent to any opponent citadel.
-    for citadel in citadels:
-        if citadel["owner"] != player:
-            cx, cy = citadel["pos"]
-            if abs(x - cx) <= 1 and abs(y - cy) <= 1:
-                return False
-
-    return True
-
-
-
-# ------------------ Drawing Functions ------------------
-
-def draw_board():
-    global choice_highlight_tiles
-    screen.fill(WATER_COLOR)
-    grid_min_x = min_x - 3
-    grid_max_x = max_x + 3
-    grid_min_y = min_y - 3
-    grid_max_y = max_y + 3
-    grid_width = (grid_max_x - grid_min_x + 1) * TILE_SIZE
-    grid_height = (grid_max_y - grid_min_y + 1) * TILE_SIZE
-    offset_x = (WIDTH - grid_width) // 2
-    offset_y = (HEIGHT - UI_HEIGHT - grid_height) // 2
-
-    for x in range(grid_min_x, grid_max_x + 1):
-        for y in range(grid_min_y, grid_max_y + 1):
-            color = LAND_COLOR if (x, y) in board else WATER_COLOR
-            pygame.draw.rect(screen, color, ((x - grid_min_x) * TILE_SIZE + offset_x,
-                                               (y - grid_min_y) * TILE_SIZE + offset_y,
-                                               TILE_SIZE, TILE_SIZE))
-    for (x, y) in move_highlight_tiles:
-        pygame.draw.rect(screen, PLAYER1_COLOR if current_player == 1 else PLAYER2_COLOR, 
-                         ((x - grid_min_x) * TILE_SIZE + offset_x,
-                          (y - grid_min_y) * TILE_SIZE + offset_y,
-                          TILE_SIZE, TILE_SIZE))
-    for (x, y) in capture_highlight_tiles:
-        pygame.draw.rect(screen, HIGHLIGHT_CAPTURE_COLOR, 
-                         ((x - grid_min_x) * TILE_SIZE + offset_x,
-                          (y - grid_min_y) * TILE_SIZE + offset_y,
-                          TILE_SIZE, TILE_SIZE))
-    for (x, y) in choice_highlight_tiles:
-        pygame.draw.rect(screen, (0, 255, 255),  
-                         ((x - grid_min_x) * TILE_SIZE + offset_x,
-                          (y - grid_min_y) * TILE_SIZE + offset_y,
-                          TILE_SIZE, TILE_SIZE))
     
-    for x in range(offset_x, offset_x + grid_width + 1, TILE_SIZE):
-        pygame.draw.line(screen, GRID_COLOR, (x, offset_y), (x, offset_y + grid_height))
-    for y in range(offset_y, offset_y + grid_height + 1, TILE_SIZE):
-        pygame.draw.line(screen, GRID_COLOR, (offset_x, y), (offset_x + grid_width, y))
-    pygame.draw.rect(screen, GRID_COLOR, (offset_x, offset_y, grid_width, grid_height), 3)
-    
-    for citadel in citadels:
-        cx, cy = citadel["pos"]
-        citadel_color = PLAYER1_COLOR if citadel["owner"] == 1 else PLAYER2_COLOR
-        pygame.draw.rect(screen, citadel_color, ((cx - grid_min_x) * TILE_SIZE + offset_x,
-                                                   (cy - grid_min_y) * TILE_SIZE + offset_y,
-                                                   TILE_SIZE, TILE_SIZE))
-        text_surface = FONT.render("C", True, (0, 0, 0))
-        text_rect = text_surface.get_rect(center=((cx - grid_min_x) * TILE_SIZE + offset_x + TILE_SIZE//2,
-                                                   (cy - grid_min_y) * TILE_SIZE + offset_y + TILE_SIZE//2))
-        screen.blit(text_surface, text_rect)
-    
-    # Updated drawing of placed pieces:
-    for (x, y), data in placed_pieces.items():
-        if data["type"] == "Turtle" and "mounted" in data:
-            turtle_color = PLAYER1_COLOR if data["owner"] == 1 else PLAYER2_COLOR
-            turtle_text = FONT.render("T", True, turtle_color)
-            mount_data = data["mounted"]
-            mount_color = PLAYER1_COLOR if mount_data["owner"] == 1 else PLAYER2_COLOR
-            mount_text = FONT.render(mount_data["type"][0], True, mount_color)
-            # Draw the turtle letter at one position and overlay the mounted piece slightly offset.
-            screen.blit(turtle_text, ((x - grid_min_x) * TILE_SIZE + offset_x + TILE_SIZE//4,
-                                      (y - grid_min_y) * TILE_SIZE + offset_y + TILE_SIZE//4))
-            screen.blit(mount_text, ((x - grid_min_x) * TILE_SIZE + offset_x + TILE_SIZE//2,
-                                     (y - grid_min_y) * TILE_SIZE + offset_y + TILE_SIZE//2))
-        else:
-            piece_color = PLAYER1_COLOR if data["owner"] == 1 else PLAYER2_COLOR
-            piece_text = FONT.render(str(data["type"])[0], True, piece_color)
-            screen.blit(piece_text, ((x - grid_min_x) * TILE_SIZE + offset_x + TILE_SIZE//3,
-                                     (y - grid_min_y) * TILE_SIZE + offset_y + TILE_SIZE//3))
-    
-    if piece_selection_done:
-        draw_graveyard()
-        draw_personal_stash_ui()
-        draw_community_stash_ui()
-    draw_ui()
-    pygame.display.flip()
-
-
-def draw_ui():
-    if not piece_selection_done:
-        ui_background = pygame.Rect(0, HEIGHT - UI_HEIGHT, WIDTH, UI_HEIGHT)
-        pygame.draw.rect(screen, (50, 50, 50), ui_background)
-        tile_text = f"Land Tiles Remaining: {land_tiles_remaining}" if placing_land else "Placing Citadels"
-        tile_surface = FONT.render(tile_text, True, TEXT_COLOR)
-        screen.blit(tile_surface, (20, HEIGHT - UI_HEIGHT + 20))
-        msg_surface = FONT.render(game_message, True, TEXT_COLOR)
-        screen.blit(msg_surface, (20, HEIGHT - UI_HEIGHT + 50))
-
-def draw_selection_screen():
-    screen.fill((50, 50, 50))
-    pygame.draw.rect(screen, (80, 80, 80), personal_area)
-    pygame.draw.rect(screen, (100, 100, 100), offered_area)
-    pygame.draw.rect(screen, (80, 80, 80), community_area)
-    pygame.draw.rect(screen, (150, 0, 0), removal_zone)
-    p_label = FONT.render("Personal Stash", True, (255, 255, 255))
-    screen.blit(p_label, p_label.get_rect(center=(personal_area.centerx, personal_area.y + 20)))
-    o_label = FONT.render("Offered Pieces", True, (255, 255, 255))
-    screen.blit(o_label, o_label.get_rect(center=(offered_area.centerx, offered_area.y + 20)))
-    c_label = FONT.render("Community Stash", True, (255, 255, 255))
-    screen.blit(c_label, c_label.get_rect(center=(community_area.centerx, community_area.y + 20)))
-    r_label = FONT.render("Trash", True, (255, 255, 255))
-    screen.blit(r_label, r_label.get_rect(center=(removal_zone.centerx, removal_zone.y + 20)))
-    
-    # Draw offered pieces.
-    for item in offered_pieces:
-        pygame.draw.rect(screen, (100, 100, 200), item["rect"])
-        piece_text = FONT.render(item["piece"], True, (255, 255, 255))
-        screen.blit(piece_text, (item["rect"].x + 10, item["rect"].y + 10))
-    
-    # Draw stashes.
-    for i, piece in enumerate(personal_stash):
-        rect = pygame.Rect(personal_area.x + 10, personal_area.y + 50 + i * 60, 150, 50)
-        pygame.draw.rect(screen, (120, 120, 220), rect)
-        text_surface = FONT.render(piece, True, (255, 255, 255))
-        screen.blit(text_surface, text_surface.get_rect(center=rect.center))
-    for i, piece in enumerate(community_stash):
-        rect = pygame.Rect(community_area.x + 10, community_area.y + 50 + i * 60, 150, 50)
-        pygame.draw.rect(screen, (120, 120, 220), rect)
-        text_surface = FONT.render(piece, True, (255, 255, 255))
-        screen.blit(text_surface, text_surface.get_rect(center=rect.center))
-    
-    # If dragging a piece, draw it.
-    if dragging_piece:
-        pygame.draw.rect(screen, (200, 100, 100), dragging_piece["rect"])
-        drag_text = FONT.render(dragging_piece["piece"], True, (255, 255, 255))
-        screen.blit(drag_text, drag_text.get_rect(center=dragging_piece["rect"].center))
-    if selection_message:
-        msg_surface = FONT.render(selection_message, True, (255, 255, 0))
-        screen.blit(msg_surface, msg_surface.get_rect(center=(removal_zone.centerx, removal_zone.y + 20)))
-    if len(personal_stash) >= max_stash_capacity and len(community_stash) >= max_stash_capacity:
-        global finish_button_rect
-        finish_button = pygame.Rect(removal_zone.centerx - 125, removal_zone.centery - 15, 250, 50)
-        pygame.draw.rect(screen, (0, 200, 0), finish_button)
-        finish_text = FONT.render("Confirm Selection", True, (0, 0, 0))
-        screen.blit(finish_text, finish_text.get_rect(center=finish_button.center))
-        finish_button_rect = finish_button
-    pygame.display.flip()
-
-def draw_graveyard():
-    pygame.draw.rect(screen, (30, 30, 30), graveyard_area)
-    grave_label = FONT.render("Graveyard", True, (255, 255, 255))
-    screen.blit(grave_label, grave_label.get_rect(center=(graveyard_area.centerx, 30)))
-    y_offset = 60
-    for piece in graveyard:
-        text = FONT.render(piece, True, (200, 200, 200))
-        screen.blit(text, (10, y_offset))
-        y_offset += 30
-
-def draw_personal_stash_ui():
-    pygame.draw.rect(screen, (70, 70, 70), personal_stash_area)
-    if personal_stash:
-        # Divide the available width evenly by the number of pieces.
-        piece_width = personal_stash_area.width / len(personal_stash)
-        for i, piece in enumerate(personal_stash):
-            # Calculate the center x–coordinate for each piece.
-            piece_x = personal_stash_area.x + i * piece_width + piece_width/2
-            text = FONT.render(piece, True, TEXT_COLOR)
-            text_rect = text.get_rect(center=(piece_x, personal_stash_area.centery))
-            screen.blit(text, text_rect)
-            # Optional: draw a debug rectangle for the clickable area.
-            pygame.draw.rect(screen, (0,255,0), 
-                             (personal_stash_area.x + i * piece_width, personal_stash_area.y, piece_width, personal_stash_area.height), 1)
-    else:
-        stash_text = "Personal Pool: (empty)"
-        text_surface = FONT.render(stash_text, True, TEXT_COLOR)
-        text_rect = text_surface.get_rect(midleft=(personal_stash_area.x + 10, personal_stash_area.centery))
-        screen.blit(text_surface, text_rect)
-
-
-
-
-def draw_community_stash_ui():
-    global toggle_button_rect
-    pygame.draw.rect(screen, (50, 50, 50), community_stash_area)
-    
-    # Upper section: turn indicator and toggle button.
-    turn_text = FONT.render(f"Player {current_player}'s Turn", True, TEXT_COLOR)
-    turn_rect = turn_text.get_rect(center=(community_stash_area.centerx, 20))
-    screen.blit(turn_text, turn_rect)
-    
-    toggle_button_width = 100
-    toggle_button_height = 40
-    toggle_button_x = community_stash_area.centerx - toggle_button_width // 2
-    toggle_button_y = turn_rect.bottom + 15  # increased spacing below turn indicator
-    toggle_button_rect = pygame.Rect(toggle_button_x, toggle_button_y, toggle_button_width, toggle_button_height)
-    pygame.draw.rect(screen, (255, 0, 0), toggle_button_rect, 4)
-    toggle_text = FONT.render("Toggle", True, TEXT_COLOR)
-    screen.blit(toggle_text, toggle_text.get_rect(center=toggle_button_rect.center))
-    
-    # Increase spacing before the separator line.
-    separator_y = toggle_button_rect.bottom + 20  # extra space added here
-    pygame.draw.line(screen, GRID_COLOR, (community_stash_area.x, separator_y), 
-                     (community_stash_area.x + community_stash_area.width, separator_y), 2)
-    
-    # Lower section: Community Pool label on two lines.
-    community_label = FONT.render("Community", True, TEXT_COLOR)
-    pool_font = pygame.font.Font(None, 30)
-    pool_font.set_underline(True)
-    pool_label = pool_font.render("Pool", True, TEXT_COLOR)
-    # Add extra space below the separator before the labels.
-    community_label_rect = community_label.get_rect(center=(community_stash_area.centerx, separator_y + 30))
-    pool_label_rect = pool_label.get_rect(center=(community_stash_area.centerx, community_label_rect.bottom + 20))
-    screen.blit(community_label, community_label_rect)
-    screen.blit(pool_label, pool_label_rect)
-    
-    # Draw community stash pieces below the pool label, centered.
-    y_offset = pool_label_rect.bottom + 20
-    global community_stash_base_y
-    community_stash_base_y = y_offset  # Store the starting y–coordinate.
-    for piece in community_stash:
-        text = FONT.render(piece, True, TEXT_COLOR)
-        # Center the text vertically in a 30-pixel high slot.
-        text_rect = text.get_rect(center=(community_stash_area.centerx, y_offset + 15))
-        screen.blit(text, text_rect)
-        y_offset += 30
-
-
-
-
-def highlight_valid_tiles(for_movement=False):
-    global move_highlight_tiles, capture_highlight_tiles, choice_highlight_tiles
-    move_highlight_tiles = []
-    capture_highlight_tiles = []
-    choice_highlight_tiles = []
-    
-    if not selected_piece:
-        return
-
-    # If selected_piece is a string, it's coming from the stash (placement phase)
-    if isinstance(selected_piece, str):
-        neighbors = lambda pos: [(pos[0] + dx, pos[1] + dy)
-                                 for dx in [-1, 0, 1] for dy in [-1, 0, 1]
-                                 if not (dx == 0 and dy == 0)]
-        my_adjacent = set()
-        for citadel in citadels:
-            if citadel["owner"] == current_player:
-                my_adjacent.update(neighbors(citadel["pos"]))
-        if selected_piece == "Turtle":
-            # For turtle placements, we only allow placement on water.
-            move_highlight_tiles = [(x, y) for (x, y) in my_adjacent
-                                    if (x, y) not in board and (x, y) not in placed_pieces]
-        else:
-            # For non-turtle pieces, allow moves onto land that is either empty or contains an unmounted turtle.
-            move_highlight_tiles = [(x, y) for (x, y) in my_adjacent
-                                    if (x, y) in board and (
-                                        (x, y) not in placed_pieces or 
-                                        (x, y) in placed_pieces and 
-                                        placed_pieces[(x, y)]["type"] == "Turtle" and "mounted" not in placed_pieces[(x, y)]
-                                    )]
-        return
-
-    # For movement phase, selected_piece is a tuple (board position) or a dict (for mounted turtles).
-    if for_movement:
-        if isinstance(selected_piece, dict):
-            pos = selected_piece["pos"]
-            piece_data = selected_piece["piece"]
-            move_mode = selected_piece["move_mode"]
-        else:
-            pos = selected_piece
-            piece_data = placed_pieces.get(pos, {})
-            move_mode = None
-
-        x, y = pos
-        # When in a mounted move mode (including "mounted_normal"),
-        # use the mount's type to determine valid moves.
-        if move_mode in ["mounted_normal", "mounted_rabbit", "mounted_capture"]:
-            moving_type = piece_data["mounted"]["type"]
-        else:
-            moving_type = piece_data["type"]
-
-        potential_moves = get_valid_moves(moving_type, pos)
-
-        for move in potential_moves:
-            dx = move[0] - x
-            dy = move[1] - y
-
-            # Case: if the move mode is "turtle" (using the turtle itself with no capture),
-            # only allow moving onto water.
-            if move_mode == "turtle":
-                if move in board and move not in placed_pieces:
-                    move_highlight_tiles.append(move)
-                continue
-
-            # Case: moving as the mounted piece.
-            elif move_mode in ["mounted", "mounted_rabbit"]:
-                if move in board:
-                    if move not in placed_pieces:
-                        move_highlight_tiles.append(move)
-                    elif placed_pieces[move]["owner"] != current_player:
-                        capture_highlight_tiles.append(move)
-            
-            # Case: friendly turtle carrying an enemy mount.
-            elif move_mode == "turtle_enemy_mount":
-                if move in board:
-                    if move not in placed_pieces:
-                        move_highlight_tiles.append(move)
-                    else:
-                        target = placed_pieces[move]
-                        if target["type"] == "Turtle" and "mounted" in target:
-                            if target["mounted"]["owner"] != current_player:
-                                capture_highlight_tiles.append(move)
-            
-            # Case: enemy turtle with your mounted piece that can capture both.
-            elif move_mode == "mounted_capture":
-                if move in board:
-                    if move not in placed_pieces:
-                        move_highlight_tiles.append(move)
-                    else:
-                        target = placed_pieces[move]
-                        if target["type"] == "Turtle" and "mounted" in target:
-                            capture_highlight_tiles.append(move)
-                        elif target["owner"] != current_player:
-                            capture_highlight_tiles.append(move)
-            
-            else:
-                # Default behavior for unmounted pieces.
-                if moving_type == "Turtle":
-                    # Modified branch: allow moving onto any turtle square (friendly or enemy) that has no mount.
-                    if move in placed_pieces and placed_pieces[move]["type"] == "Turtle" and "mounted" not in placed_pieces[move]:
-                        move_highlight_tiles.append(move)
-                    # Also allow water moves.
-                    elif move not in placed_pieces and move not in board:
-                        move_highlight_tiles.append(move)
-                    # Otherwise, if adjacent to an enemy piece, allow capture.
-                    elif max(abs(dx), abs(dy)) == 1 and move in placed_pieces and placed_pieces[move]["owner"] != piece_data["owner"]:
-                        capture_highlight_tiles.append(move)
-                else:
-                    if move in board:
-                        # If destination is empty or contains an unmounted turtle, allow mounting.
-                        if (move not in placed_pieces) or (move in placed_pieces and 
-                           placed_pieces[move]["type"] == "Turtle" and "mounted" not in placed_pieces[move]):
-                            move_highlight_tiles.append(move)
-                        elif placed_pieces[move]["owner"] != piece_data["owner"]:
-                            capture_highlight_tiles.append(move)
-                    else:
-                        if (move in placed_pieces and 
-                            placed_pieces[move]["type"] == "Turtle" and 
-                            "mounted" not in placed_pieces[move]):
-                            # Prioritize mounting even if the turtle is enemy.
-                            move_highlight_tiles.append(move)
-                        elif (move in placed_pieces and placed_pieces[move]["owner"] != piece_data["owner"]):
-                            capture_highlight_tiles.append(move)
-        return
-    else:
-        # Not in movement mode; simply highlight tiles adjacent to the player's citadels.
-        neighbors = lambda pos: [(pos[0] + dx, pos[1] + dy)
-                                 for dx in [-1, 0, 1] for dy in [-1, 0, 1]
-                                 if not (dx == 0 and dy == 0)]
-        my_adjacent = set()
-        for citadel in citadels:
-            if citadel["owner"] == current_player:
-                my_adjacent.update(neighbors(citadel["pos"]))
-        if isinstance(selected_piece, dict):
-            piece_data = selected_piece["piece"]
-        else:
-            piece_data = placed_pieces.get(selected_piece, {})
-        if piece_data.get("type") == "Turtle":
-            move_highlight_tiles = [(x, y) for (x, y) in my_adjacent
-                                    if (x, y) not in board and (x, y) not in placed_pieces]
-        else:
-            move_highlight_tiles = [(x, y) for (x, y) in my_adjacent
-                                    if (x, y) in board and (
-                                        (x, y) not in placed_pieces or 
-                                        (x, y) in placed_pieces and placed_pieces[(x, y)]["type"] == "Turtle" and "mounted" not in placed_pieces[(x, y)]
-                                    )]
-
-
-
-def confirm_board_layout():
-    # Draw the board once and store it on-screen.
-    draw_board()
-    pygame.display.flip()
-
-    confirming = True
-    # Define a confirmation zone (a bar at the bottom of the screen)
-    confirm_zone = pygame.Rect(0, HEIGHT - REMOVAL_HEIGHT, WIDTH, REMOVAL_HEIGHT)
-    # Move the confirm button more to the right: 
-    confirm_button = pygame.Rect(WIDTH - 250, confirm_zone.y + 10, 200, confirm_zone.height - 20)
-    
-    while confirming:
-        # Instead of redrawing the entire board, only redraw the confirmation zone on top.
-        pygame.draw.rect(screen, (50, 50, 50), confirm_zone)
         
-        # Draw the confirmation message.
-        msg = FONT.render("Confirm Board Layout", True, (255, 255, 255))
-        msg_rect = msg.get_rect(center=(WIDTH // 2, confirm_zone.y + 15))
-        screen.blit(msg, msg_rect)
+    def _repr_html_(self) -> str:
+        return f"""<div style='display: flex; flex-direction: column;'>{self.name}{self.personal_stash._repr_html_()}</div>"""
+
+
+    def __str__(self) -> str:
+        return f"Player({self.name})"
+    
+    def __repr__(self) -> str:
+        return f"Player({self.name})"
+
+
+    def _to_tile(self, obj:Coordinate|Tile|Entity) -> Tile:
+        '''Infer a Coordinate, Tile, or Entity to a Tile.
+
+        Args:
+            obj: The object to convert.
+        '''
+        if isinstance(obj, Coordinate):
+            return self.game.board[obj]
+        if isinstance(obj, Tile):
+            return obj
+        if isinstance(obj, Entity):
+            return obj.location
+        raise TypeError(f"Object must be a Coordinate, Tile, or Entity, not {type(obj)}.")
+    
+
+    def _to_entity(self, obj:Coordinate|Tile|Entity|Type['Entity']) -> 'Entity':
+        '''Infer a Coordinate, Tile, or Entity to an Entity.
         
-        # Draw the confirm button.
-        pygame.draw.rect(screen, (0, 200, 0), confirm_button)
-        btn_text = FONT.render("Confirm", True, (0, 0, 0))
-        btn_rect = btn_text.get_rect(center=confirm_button.center)
-        screen.blit(btn_text, btn_rect)
+        Returns a board piece unless the object is a type, in which case it returns the first entity of that type in the player's personal stash.
+        '''
+        if isinstance(obj, Coordinate) or isinstance(obj, Tile):
+            if isinstance(obj, Coordinate):
+                obj = self.game.board[obj]
+            entities = obj.where(owner=self)
+            if len(entities) > 1:
+                entities = entities.where(Piece)
+            if not entities:
+                raise ActionError(f"No entities found at {obj}.")
+            return entities[0]
+        if isinstance(obj, Entity):
+            return obj
+        if isinstance(obj, type):
+            entities = self.personal_stash.where(obj)
+            if not entities:
+                raise ActionError(f"Entity '{obj}' not found in personal stash.")
+            return entities[0]
+
+
+    def can_perform_action(self, entity:'Entity'|Type['Entity'], action_name:str, target:Coordinate|Tile|Entity) -> BoolWithReason:
+        '''Check if an entity can perform an action.
+
+        Args:
+            entity: The entity to perform the action on.
+            action_name: The name of the action to perform.
+            target: The target of the action. This can be a coordinate, tile, or entity.
+        '''
+        target = self._to_tile(target)
+        entity = self._to_entity(entity)
         
-        pygame.display.flip()
+        actions = entity.actions(target, self)
+        if action_name not in actions:
+            return BoolWithReason(f"Action '{action_name}' not found on {entity}.")
         
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if confirm_button.collidepoint(event.pos):
-                    confirming = False
+        return actions[action_name].can_use(target, self)
+    
+
+    def perform_action(self,
+        entity:'Entity'|Type['Entity']|Coordinate|Tile,
+        action_name:str,
+        target:Coordinate|Tile|Entity
+        ):
+        '''Perform an action on an entity.
+
+        Args:
+            entity: The entity to perform the action on.
+            action_name: The name of the action to perform.
+            target: The target of the action. This can be a coordinate, tile, or entity.
+        '''
+        target = self._to_tile(target)
+        entity = self._to_entity(entity)
         
-        # Increase delay to reduce any visual flicker.
-        pygame.time.wait(100)
+        if self.game.validate_actions:
+            can_perform = self.can_perform_action(entity, action_name, target)
+            if not can_perform:
+                raise ActionError(can_perform.reason)
+        action = entity.actions(target, self)[action_name]
+        action.execute(target, self)
+        entity.game.end_turn()
+    
+
+    def place(self, entity:'Entity'|Type['Entity'], target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'place', target)
+    
+    def move(self, entity:'Entity'|Type['Entity']|Coordinate|Tile, target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'move', target)
+    
+    def capture(self, entity:'Entity'|Type['Entity']|Coordinate|Tile, target:Coordinate|Tile|Entity):
+        self.perform_action(entity, 'capture', target)
 
 
+class Board(dict[Coordinate, 'Tile']):
+    '''A collection of tiles.
+    '''
+
+    def __init__(self, game:Game, name:str='main'):
+        '''Create a new board.
+
+        Args:
+            game: The game this board is in.
+            name: A unique name for this board.
+        '''
+        super().__init__()
+        self.name = name
+        self.game:Game = game
+        self.default_tile_color = "#87CEEB"
+    
+
+    class BoardJson(TypedDict):
+        name: str
+        tiles: dict[tuple[int, int], Tile.EntityListJson]
+    
+
+    def to_json(self) -> dict:
+        '''Convert the board to JSON.
+        '''
+        return {
+            'name': self.name,
+            'tiles': {coordinate.to_json(): tile.to_json() for coordinate, tile in self.items()},
+            }
 
 
-def move_piece(x, y):
-    global selected_piece, graveyard
-    move_executed = False
+    @classmethod
+    def from_json(cls, json_data:dict, game:Game) -> 'Board':
+        '''Load the board from JSON.
 
-    # Only proceed if the clicked square is among the highlighted moves,
-    # captures, or ambiguous choice moves.
-    if not selected_piece or not ((x, y) in move_highlight_tiles or 
-                                   (x, y) in capture_highlight_tiles or 
-                                   (x, y) in choice_highlight_tiles):
-        return
+        Args:
+            json_data: The JSON data to load.
+            game: The game this board is in.
+        '''
+        board = cls(game, json_data['name'])
+        for coordinate, tile_data in json_data['tiles'].items():
+            coordinate = Coordinate.from_json(coordinate)
+            tile:Tile = Tile.from_json(tile_data, board)
+            tile.coordinate = coordinate
+            board[coordinate] = tile
+        return board
 
-    if isinstance(selected_piece, dict):
-        pos = selected_piece["pos"]
-        mode = selected_piece["move_mode"]
-        if mode == "mounted_normal":
-            if pos not in placed_pieces:
-                placed_pieces[pos] = selected_piece["piece"]
-            turtle_piece = placed_pieces[pos]
-            if "mounted" in turtle_piece:
-                mounted_piece = turtle_piece["mounted"]
-                # Temporarily remove the mount from the turtle.
-                del turtle_piece["mounted"]
-                if (x, y) in placed_pieces:
-                    target = placed_pieces.get((x, y))
-                    # If target is an enemy turtle:
-                    if target["type"] == "Turtle" and target["owner"] != current_player:
-                        # NEW: If the enemy turtle already carries a mount, automatically capture it.
-                        if "mounted" in target:
-                            graveyard.append(target["mounted"]["type"])
-                            del target["mounted"]
-                            target["mounted"] = mounted_piece
-                            move_executed = True
-                        else:
-                            # Otherwise, prompt the user.
-                            decision = prompt_user("Press 'C' for Capture or 'M' for Mount:")
-                            if decision == "Capture":
-                                del placed_pieces[(x, y)]
-                                graveyard.append(target["type"])
-                                turtle_piece["mounted"] = mounted_piece  # Reattach mount so it stays at pos.
-                                placed_pieces[pos] = turtle_piece
-                                move_executed = True
-                            elif decision == "Mount":
-                                del placed_pieces[(x, y)]
-                                graveyard.append(target["type"])
-                                placed_pieces[(x, y)] = mounted_piece
-                                move_executed = True
-                            else:
-                                turtle_piece["mounted"] = mounted_piece
-                                placed_pieces[pos] = turtle_piece
-                    # If the target is an enemy piece of any other type, capture it normally.
-                    elif target["owner"] != current_player:
-                        del placed_pieces[(x, y)]
-                        graveyard.append(target["type"])
-                        placed_pieces[(x, y)] = mounted_piece
-                        move_executed = True
-                    elif (x, y) in move_highlight_tiles:
-                        placed_pieces[(x, y)] = mounted_piece
-                        move_executed = True
-                    else:
-                        turtle_piece["mounted"] = mounted_piece
-                        placed_pieces[pos] = turtle_piece
-                elif (x, y) in move_highlight_tiles:
-                    placed_pieces[(x, y)] = mounted_piece
-                    move_executed = True
-                else:
-                    turtle_piece["mounted"] = mounted_piece
-                    placed_pieces[pos] = turtle_piece
 
+    def __hash__(self) -> int:
+        return hash(self.name)
+    
+
+    def __eq__(self, other:object) -> bool:
+        if not isinstance(other, Board):
+            return False
+        return self.name == other.name
+
+    @overload
+    def __getitem__(self, coordinate:Coordinate) -> 'Tile':
+        '''Get the tile at the given coordinate.
+
+        Args:
+            coordinate: The coordinate to get the tile at.
+        '''
+    @overload
+    def __getitem__(self, coordinates:list[Coordinate]) -> list['Tile']:
+        '''Get the tiles at the given coordinates.
+
+        Args:
+            coordinates: The coordinates to get the tiles at.
+        '''
+    def __getitem__(self, coordinate:list[Coordinate|tuple[int, int]]|Coordinate|tuple[int, int]):
+        if isinstance(coordinate, list):
+            res = []
+            for coord in coordinate:
+                if not isinstance(coord, Coordinate):
+                    coord = Coordinate(*coord)
+                res.append(self.get(coord, Tile(self, coord)))
+            return res
+        elif isinstance(coordinate, Coordinate):
+            return super().get(coordinate, Tile(self, coordinate))
+        elif isinstance(coordinate, tuple):
+            coord = Coordinate(*coordinate)
+            return super().get(coord, Tile(self, coord))
         else:
-            # For other move modes for mounted pieces.
-            turtle_piece = placed_pieces.pop(pos)
-            if mode == "turtle_no_capture":
-                if (x, y) in move_highlight_tiles:
-                    placed_pieces[(x, y)] = turtle_piece
-                    move_executed = True
-                else:
-                    placed_pieces[pos] = turtle_piece
-
-            elif mode == "turtle_enemy_mount":
-                if (x, y) == pos:
-                    if "mounted" in turtle_piece:
-                        enemy_mount = turtle_piece.pop("mounted")
-                        graveyard.append(enemy_mount["type"])
-                        placed_pieces[pos] = turtle_piece
-                        move_executed = True
-                    else:
-                        placed_pieces[pos] = turtle_piece
-                elif (x, y) in move_highlight_tiles:
-                    placed_pieces[(x, y)] = turtle_piece
-                    move_executed = True
-                else:
-                    placed_pieces[pos] = turtle_piece
-
-            elif mode == "mounted_rabbit":
-                if "mounted" in turtle_piece:
-                    rabbit_piece = turtle_piece.pop("mounted")
-                    if (x, y) in capture_highlight_tiles:
-                        target = placed_pieces.get((x, y))
-                        if target and target["owner"] != current_player:
-                            del placed_pieces[(x, y)]
-                            graveyard.append(target["type"])
-                            placed_pieces[(x, y)] = rabbit_piece
-                            move_executed = True
-                        else:
-                            turtle_piece["mounted"] = rabbit_piece
-                            placed_pieces[pos] = turtle_piece
-                    elif (x, y) in move_highlight_tiles:
-                        placed_pieces[(x, y)] = rabbit_piece
-                        move_executed = True
-                    else:
-                        turtle_piece["mounted"] = rabbit_piece
-                        placed_pieces[pos] = turtle_piece
-                else:
-                    placed_pieces[pos] = turtle_piece
-
-            elif mode == "mounted_capture":
-                if (x, y) == pos:
-                    graveyard.append(turtle_piece["type"])
-                    if "mounted" in turtle_piece:
-                        graveyard.append(turtle_piece["mounted"]["type"])
-                    move_executed = True
-                elif (x, y) in capture_highlight_tiles:
-                    if "mounted" in turtle_piece:
-                        mount_piece = turtle_piece.pop("mounted")
-                        target = placed_pieces.get((x, y))
-                        if target and target["owner"] != current_player:
-                            del placed_pieces[(x, y)]
-                            graveyard.append(target["type"])
-                            placed_pieces[(x, y)] = mount_piece
-                            move_executed = True
-                        else:
-                            turtle_piece["mounted"] = mount_piece
-                            placed_pieces[pos] = turtle_piece
-                    else:
-                        placed_pieces[pos] = turtle_piece
-                elif (x, y) in move_highlight_tiles:
-                    if "mounted" in turtle_piece:
-                        mount_piece = turtle_piece.pop("mounted")
-                        placed_pieces[(x, y)] = mount_piece
-                        move_executed = True
-                    else:
-                        placed_pieces[pos] = turtle_piece
-                else:
-                    placed_pieces[pos] = turtle_piece
-
-            else:
-                placed_pieces[pos] = turtle_piece
-    else:
-        # Unmounted piece branch.
-        moving_piece = placed_pieces.pop(selected_piece)
-        if moving_piece["type"] == "Turtle":
-            if (x, y) in move_highlight_tiles:
-                placed_pieces[(x, y)] = moving_piece
-                move_executed = True
-            elif (x, y) in capture_highlight_tiles:
-                target_piece = placed_pieces.get((x, y))
-                if target_piece and target_piece["owner"] != moving_piece["owner"]:
-                    del placed_pieces[(x, y)]
-                    graveyard.append(target_piece["type"])
-                    placed_pieces[selected_piece] = moving_piece
-                    move_executed = True
-                else:
-                    placed_pieces[selected_piece] = moving_piece
-            else:
-                placed_pieces[selected_piece] = moving_piece
+            raise TypeError(f"Coordinate must be a Coordinate or list of Coordinates, not {type(coordinate)}.")
+        
+    
+    def __contains__(self, key):
+        if isinstance(key, Coordinate):
+            return super().__contains__(key)
+        elif isinstance(key, Tile):
+            return super().__contains__(key.coordinate)
+        elif isinstance(key, Entity):
+            return self.get_coordinate_of_entity(key) is not None
         else:
-            if (x, y) in capture_highlight_tiles:
-                target_piece = placed_pieces.get((x, y))
-                if target_piece and target_piece["owner"] != moving_piece["owner"]:
-                    if target_piece["type"] == "Turtle":
-                        if "mounted" in target_piece:
-                            graveyard.append(target_piece["mounted"]["type"])
-                            del target_piece["mounted"]
-                            target_piece["mounted"] = moving_piece
-                            move_executed = True
-                        else:
-                            del placed_pieces[(x, y)]
-                            graveyard.append(target_piece["type"])
-                            placed_pieces[selected_piece] = moving_piece
-                            move_executed = True
-                    else:
-                        del placed_pieces[(x, y)]
-                        graveyard.append(target_piece["type"])
-                        placed_pieces[(x, y)] = moving_piece
-                        move_executed = True
-                else:
-                    placed_pieces[selected_piece] = moving_piece
-            elif (x, y) in move_highlight_tiles:
-                if (x, y) in placed_pieces and placed_pieces[(x, y)]["type"] == "Turtle" and "mounted" not in placed_pieces[(x, y)]:
-                    placed_pieces[(x, y)]["mounted"] = moving_piece
-                    move_executed = True
-                else:
-                    placed_pieces[(x, y)] = moving_piece
-                    move_executed = True
-            else:
-                placed_pieces[selected_piece] = moving_piece
+            raise TypeError(f"Key must be a Coordinate, Tile, or Entity, not {type(key)}.")
+        
+    
+    def copy(self) -> 'Board':
+        '''Create a copy of the board.
 
-    if move_executed:
-        selected_piece = None
-        move_highlight_tiles.clear()
-        capture_highlight_tiles.clear()
-        choice_highlight_tiles.clear()
-        switch_player()  # Toggle turn after a successful move.
-    else:
-        selected_piece = None
-        move_highlight_tiles.clear()
-        capture_highlight_tiles.clear()
-        choice_highlight_tiles.clear()
+        Returns:
+            A copy of the board.
+        '''
+        new_board = Board(self.game)
+        for coordinate, tile in self.items():
+            new_tile = Tile(new_board, coordinate)
+            new_tile.extend(tile)
+            new_board[coordinate] = new_tile
+        return new_board
+    
+
+    def place(self, entity:'Entity', coordinate:Coordinate, to_test:bool=False):
+        '''Place an entity on the board.
+
+        Args:
+            entity: The entity to place.
+            coordinate: The coordinate to place the entity at.
+            to_test: If True, force the placement and do not change the entity.
+        '''
+        if coordinate not in self:
+            self[coordinate] = Tile(self, coordinate)
+        if not to_test:
+            entity.location = self[coordinate]
+        self[coordinate].append(entity, not to_test)
+    
+
+    def get_coordinate_of_entity(self, entity:'Entity') -> Coordinate|None:
+        '''Get the coordinate of an entity.
+
+        Args:
+            entity: The entity to get the coordinate of.
+        '''
+        for coordinate, tile in self.items():
+            if entity in tile:
+                return coordinate
+        return None
+    
+
+    def remove(self, entity:'Entity') -> 'Entity':
+        '''Remove an entity from the board.
+
+        Args:
+            entity: The entity to remove.
+        '''
+        coordinate = self.get_coordinate_of_entity(entity)
+        if coordinate is None:
+            raise ValueError(f"Entity '{entity}' not found on board.")
+        self[coordinate].remove(entity)
+        if not self[coordinate]:
+            del self[coordinate]
+    
+
+    def where(self,
+        entity_type:Type[T]=Type['Entity'],
+        created_by:Player|None=None,
+        owner:Player|None=None,
+        layer:Layer|None=None) -> 'EntityList[T]':
+        '''Search for entities on the board.
+
+        If any arguments are not provided, all entities for that parameter are returned.
+        
+        Args:
+            entity_type: The type of entity to find.
+            created_by: The player who created the entity.
+            owner: The player who owns the entity.
+            layer: The layer of the entity.
+        '''
+        entities = EntityList(self.game)
+        for tile in self.values():
+            entities.extend(tile.where(entity_type, created_by, owner, layer))
+        return entities
 
 
+    def find_tiles(self,
+        entity_type:Type['Entity']=Type['Entity'],
+        created_by:Player|None=None,
+        layer:Layer|None=None) -> list['Tile']:
+        '''Search for tiles on the board.
 
-
-def get_valid_moves(piece_type, pos):
-    x, y = pos
-    valid_moves = []
-    if piece_type == "Bird":
-        # Bird moves in straight lines horizontally or vertically.
-        # It moves over contiguous land until water is encountered.
-        # When water is encountered, include the square if it is occupied by a turtle.
-        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-            step = 1
-            while True:
-                new_x = x + dx * step
-                new_y = y + dy * step
-                candidate = (new_x, new_y)
-                if candidate in board:
-                    valid_moves.append(candidate)
-                    step += 1
-                else:
-                    # Candidate is water.
-                    if candidate in placed_pieces and placed_pieces[candidate]["type"] == "Turtle":
-                        valid_moves.append(candidate)
-                    break
-
-    elif piece_type == "Knight":
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
+        If any arguments are not provided, all entities for that parameter are returned.
+        
+        Args:
+            entity_type: The type of entity to find.
+            created_by: The player who created the entity.
+            layer: The layer of the entity.
+        '''
+        tiles = []
+        for tile in self.values():
+            for entity in tile:
+                if not isinstance(entity, entity_type):
                     continue
-                valid_moves.append((x + dx, y + dy))
-    elif piece_type == "Turtle":
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
+                if created_by and entity.created_by != created_by:
                     continue
-                valid_moves.append((x + dx, y + dy))
-    elif piece_type == "Rabbit":
-        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-            valid_moves.append((x + dx, y + dy))
-        for dx, dy in [(2, 0), (-2, 0), (0, 2), (0, -2)]:
-            valid_moves.append((x + dx, y + dy))
-    elif piece_type in ["Builder", "Bomber", "Necromancer", "Assassin"]:
-        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-            valid_moves.append((x + dx, y + dy))
-    return valid_moves
-
-
-
-# ------------------ Mouse Click Handler ------------------
-def handle_mouse_click(pos, player):
-    global selected_piece, current_player, game_message, community_stash_base_y, choice_highlight_tiles
-    x, y = pos
-
-    # Toggle button for testing.
-    if toggle_button_rect.collidepoint(pos):
-        switch_player()
-        return
-
-    # Calculate grid coordinates based on the expanded grid.
-    grid_min_x = min_x - 3
-    grid_max_x = max_x + 3
-    grid_min_y = min_y - 3
-    grid_max_y = max_y + 3
-    grid_width = (grid_max_x - grid_min_x + 1) * TILE_SIZE
-    grid_height = (grid_max_y - grid_min_y + 1) * TILE_SIZE
-    offset_x = (WIDTH - grid_width) // 2
-    offset_y = (HEIGHT - UI_HEIGHT - grid_height) // 2
-    grid_x = (x - offset_x) // TILE_SIZE + grid_min_x
-    grid_y = (y - offset_y) // TILE_SIZE + grid_min_y
-
-    # Land placement phase.
-    if placing_land:
-        if (grid_x, grid_y) not in placed_pieces:
-            place_land_tile(grid_x, grid_y)
-        return
-
-    # Citadel placement phase.
-    elif len(citadels) < 2:
-        if (grid_x, grid_y) in board and (grid_x, grid_y) not in placed_pieces:
-            place_citadel(grid_x, grid_y)
-        return
-
-    # Stash selection: Check stash areas first.
-    if not piece_selection_done:
-        if personal_area.collidepoint(x, y):
-            index = (y - personal_area.y - 50) // 60  # Adjust as needed.
-            if 0 <= index < len(personal_stash):
-                selected_piece = personal_stash[index]
-                highlight_valid_tiles()
-            return
-        elif community_area.collidepoint(x, y):
-            index = (y - community_area.y - 50) // 60  # Adjust as needed.
-            if 0 <= index < len(community_stash):
-                selected_piece = community_stash[index]
-                highlight_valid_tiles()
-            return
-    else:
-        # In game phase, use updated stash UI areas.
-        if personal_stash_area.collidepoint(x, y):
-            if personal_stash:
-                piece_width = personal_stash_area.width / len(personal_stash)
-                relative_x = x - personal_stash_area.x
-                index = int(relative_x // piece_width)
-                index = min(index, len(personal_stash) - 1)
-                selected_piece = personal_stash[index]
-                highlight_valid_tiles()
-            return
-        elif community_stash_area.collidepoint(x, y):
-            index = int((y - community_stash_base_y) // 30)
-            if 0 <= index < len(community_stash):
-                selected_piece = community_stash[index]
-                highlight_valid_tiles()
-            return
-
-    # Movement/Capture branch: if a piece is already selected for moving.
-    # Modified to accept selected_piece as either a tuple or a dict.
-    if isinstance(selected_piece, (tuple, dict)):
-        if ((grid_x, grid_y) in move_highlight_tiles or 
-            (grid_x, grid_y) in capture_highlight_tiles or 
-            (grid_x, grid_y) in choice_highlight_tiles):
-            move_piece(grid_x, grid_y)
-            return
-
-    # Board piece selection: if no stash selection was made, allow selection of a board piece.
-    if (grid_x, grid_y) in placed_pieces:
-        piece_data = placed_pieces[(grid_x, grid_y)]
-        if piece_data["owner"] == current_player:
-            # NEW: If the piece is a Turtle with a mounted piece, call our mounted-selection helper.
-            if piece_data["type"] == "Turtle" and "mounted" in piece_data:
-                selected_piece = handle_mounted_turtle_selection(grid_x, grid_y)
-                # Immediately update valid move highlights based on the selected mode.
-                highlight_valid_tiles(for_movement=True)
-            else:
-                selected_piece = (grid_x, grid_y)
-                highlight_valid_tiles(for_movement=True)
-        return
-
-    # Placing a piece from a stash.
-    if isinstance(selected_piece, str):
-        if is_valid_piece_placement(grid_x, grid_y, current_player, selected_piece):
-            print(f"Valid placement: {selected_piece} at ({grid_x}, {grid_y})")
-            placed_pieces[(grid_x, grid_y)] = {"type": selected_piece, "owner": current_player}
-            if selected_piece in personal_stash:
-                personal_stash.remove(selected_piece)
-            elif selected_piece in community_stash:
-                community_stash.remove(selected_piece)
-            selected_piece = None
-            move_highlight_tiles.clear()
-            capture_highlight_tiles.clear()
-            choice_highlight_tiles.clear()
-            switch_player()  # End turn after placement.
-        else:
-            print(f"Invalid placement at ({grid_x}, {grid_y}). It must be unoccupied, adjacent to your citadel, and not adjacent to an opponent's citadel.")
-        return
-
-
-# ------------------ Phase Functions ------------------
-def configuration_phase():
-    # Defaults
-    land_input = "10"
-    personal_input = "3"
-    community_input = "3"
+                if layer and entity.layer != layer:
+                    continue
+                tiles.append(tile)
+        return tiles
     
-    # Define rectangles for input fields and labels
-    center_x = WIDTH // 2
-    center_y = HEIGHT // 2
-    field_width = 100
-    field_height = 40
 
-    # Input field positions (to the right of their labels)
-    land_field_rect = pygame.Rect(center_x + 50, center_y - 120, field_width, field_height)
-    personal_field_rect = pygame.Rect(center_x + 50, center_y - 40, field_width, field_height)
-    community_field_rect = pygame.Rect(center_x + 50, center_y + 40, field_width, field_height)
+    @property
+    def citadels(self) -> 'EntityList[Citadel]':
+        '''The citadels on the board.
+        '''
+        return self.where(Citadel)
 
-    # Label positions (shifted to the left for better spacing)
-    land_label_pos = (center_x - 200, center_y - 120)
-    personal_label_pos = (center_x - 200, center_y - 40)
-    community_label_pos = (center_x - 200, center_y + 40)
 
-    # Confirm button
-    confirm_button = pygame.Rect(center_x - 75, center_y + 120, 150, 50)
-
-    active_field = None  # Can be "land", "personal", or "community"
-
-    configuring = True
-    global num_land_tiles, num_personal_pool, num_community_pool
-    # Set defaults in globals (if desired)
-    num_land_tiles = int(land_input)
-    num_personal_pool = int(personal_input)
-    num_community_pool = int(community_input)
-
-    while configuring:
-        screen.fill((30, 30, 30))
+    @property
+    def citadels_are_connected(self) -> bool:
+        '''True if all citadels are connected to each other by a series of land tiles.
         
-        # Draw labels
-        land_label = FONT.render("Land Tiles:", True, (255, 255, 255))
-        personal_label = FONT.render("Personal Pool Pieces:", True, (255, 255, 255))
-        community_label = FONT.render("Community Pool Pieces:", True, (255, 255, 255))
-        screen.blit(land_label, land_label_pos)
-        screen.blit(personal_label, personal_label_pos)
-        screen.blit(community_label, community_label_pos)
-        
-        # Draw input fields (with a border to indicate active field)
-        pygame.draw.rect(screen, (255, 255, 255), land_field_rect, 2 if active_field=="land" else 1)
-        pygame.draw.rect(screen, (255, 255, 255), personal_field_rect, 2 if active_field=="personal" else 1)
-        pygame.draw.rect(screen, (255, 255, 255), community_field_rect, 2 if active_field=="community" else 1)
-        
-        # Render current text inside each field
-        land_text = FONT.render(land_input, True, (255, 255, 255))
-        personal_text = FONT.render(personal_input, True, (255, 255, 255))
-        community_text = FONT.render(community_input, True, (255, 255, 255))
-        screen.blit(land_text, (land_field_rect.x+5, land_field_rect.y+5))
-        screen.blit(personal_text, (personal_field_rect.x+5, personal_field_rect.y+5))
-        screen.blit(community_text, (community_field_rect.x+5, community_field_rect.y+5))
-        
-        # Draw confirm button
-        pygame.draw.rect(screen, (0, 0, 200), confirm_button)
-        confirm_text = FONT.render("Confirm", True, (255, 255, 255))
-        screen.blit(confirm_text, confirm_text.get_rect(center=confirm_button.center))
-        
-        pygame.display.flip()
-        
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                # Check if click is in any input field; if so, set it active
-                if land_field_rect.collidepoint(event.pos):
-                    active_field = "land"
-                elif personal_field_rect.collidepoint(event.pos):
-                    active_field = "personal"
-                elif community_field_rect.collidepoint(event.pos):
-                    active_field = "community"
-                elif confirm_button.collidepoint(event.pos):
-                    # When confirming, update the global values and exit configuration
-                    try:
-                        num_land_tiles = int(land_input)
-                        num_personal_pool = int(personal_input)
-                        num_community_pool = int(community_input)
-                    except ValueError:
-                        # If conversion fails, keep defaults
-                        pass
-                    configuring = False
-                else:
-                    active_field = None
-            elif event.type == pygame.KEYDOWN:
-                if active_field is not None:
-                    # Accept only numeric input and backspace
-                    if event.key == pygame.K_BACKSPACE:
-                        if active_field == "land":
-                            land_input = land_input[:-1]
-                        elif active_field == "personal":
-                            personal_input = personal_input[:-1]
-                        elif active_field == "community":
-                            community_input = community_input[:-1]
-                    else:
-                        if event.unicode.isdigit():
-                            if active_field == "land":
-                                land_input += event.unicode
-                            elif active_field == "personal":
-                                personal_input += event.unicode
-                            elif active_field == "community":
-                                community_input += event.unicode
-        
-        pygame.time.wait(50)
-
-
-
-def piece_selection_phase():
-    global dragging_piece, drag_offset_x, drag_offset_y, finish_button_rect, selection_message
-    selection_running = True
-    dragging_piece = None
-    drag_offset_x = 0
-    drag_offset_y = 0
-    selection_message = ""
-    while selection_running:
-        draw_selection_screen()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                selection_running = False
+        Diagonals do no count, but Turtles do. This value is also True if there are not at least 2 citadels on the board.
+        '''
+        if len(self.citadels) <= 1:
+            return True
+        starting_citadel = self.find_tiles(Citadel)[0]
+        connected_citadels = set()
+        checked_tiles = set()
+        def walk(tile:Tile):
+            if tile in checked_tiles:
                 return
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                mouse_pos = event.pos
-                dragging_piece = None
-                # Check if a piece from personal stash is dragged.
-                for i, piece in enumerate(personal_stash):
-                    rect = pygame.Rect(personal_area.x + 10, personal_area.y + 50 + i * 60, 150, 50)
-                    if rect.collidepoint(mouse_pos):
-                        dragging_piece = {"piece": piece, "rect": rect.copy()}
-                        drag_offset_x = mouse_pos[0] - rect.x
-                        drag_offset_y = mouse_pos[1] - rect.y
-                        personal_stash.pop(i)
-                        break
-                if not dragging_piece:
-                    for i, piece in enumerate(community_stash):
-                        rect = pygame.Rect(community_area.x + 10, community_area.y + 50 + i * 60, 150, 50)
-                        if rect.collidepoint(mouse_pos):
-                            dragging_piece = {"piece": piece, "rect": rect.copy()}
-                            drag_offset_x = mouse_pos[0] - rect.x
-                            drag_offset_y = mouse_pos[1] - rect.y
-                            community_stash.pop(i)
-                            break
-                if not dragging_piece:
-                    for item in offered_pieces:
-                        if item["rect"].collidepoint(mouse_pos):
-                            dragging_piece = {"piece": item["piece"], "rect": item["rect"].copy()}
-                            drag_offset_x = mouse_pos[0] - item["rect"].x
-                            drag_offset_y = mouse_pos[1] - item["rect"].y
-                            break
-                if len(personal_stash) >= max_stash_capacity and len(community_stash) >= max_stash_capacity:
-                    if finish_button_rect.collidepoint(mouse_pos):
-                        selection_running = False
-                        return
-            elif event.type == pygame.MOUSEMOTION:
-                if dragging_piece:
-                    dragging_piece["rect"].x = event.pos[0] - drag_offset_x
-                    dragging_piece["rect"].y = event.pos[1] - drag_offset_y
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if dragging_piece:
-                    mouse_pos = event.pos
-                    if personal_area.collidepoint(mouse_pos):
-                        if len(personal_stash) < max_stash_capacity:
-                            personal_stash.append(dragging_piece["piece"])
-                            selection_message = ""
-                        else:
-                            selection_message = "Personal stash is full!"
-                    elif community_area.collidepoint(mouse_pos):
-                        if len(community_stash) < max_stash_capacity:
-                            community_stash.append(dragging_piece["piece"])
-                            selection_message = ""
-                        else:
-                            selection_message = "Community stash is full!"
-                    elif removal_zone.collidepoint(mouse_pos):
-                        selection_message = ""
-                        print(f"Removed {dragging_piece['piece']}")
-                    dragging_piece = None
-        pygame.display.flip()
+            checked_tiles.add(tile)
+            if tile.has_type(Citadel):
+                connected_citadels.add(tile.citadel)
+            if len(connected_citadels) == len(self.citadels):
+                return
+            if tile.get_by_layer(Layer.TERRAIN):
+                for adjacent_tile in tile.get_adjacent_tiles(diagonal=False):
+                    walk(adjacent_tile)
+        walk(starting_citadel)
+        return len(connected_citadels) == len(self.citadels)
 
-def start_game_phase():
-    global game_message
-    print("Starting game phase...")
-    game_message = "Piece selection complete! Starting game phase..."
-    main_running = True
-    while main_running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                main_running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                handle_mouse_click(event.pos, player=current_player)
-        draw_board()
-        pygame.display.flip()
-    pygame.quit()
 
-# ------------------ Main Game Loop ------------------
-# Run the configuration phase once.
-configuration_phase()
+    @property
+    def extents(self) -> Rectangle:
+        '''The extents of the board. The extents are the minimum and maximum x and y coordinates of the tiles on the board.
+        '''
+        min_x = min_y = None
+        max_x = max_y = None
+        for coordinate in self.keys():
+            if min_x is None or coordinate.x < min_x:
+                min_x = coordinate.x
+            if max_x is None or coordinate.x > max_x:
+                max_x = coordinate.x
+            if min_y is None or coordinate.y < min_y:
+                min_y = coordinate.y
+            if max_y is None or coordinate.y > max_y:
+                max_y = coordinate.y
+        return Rectangle(min_x, max_x, min_y, max_y)
+    
 
-# Now update any dependent variables:
-land_tiles_remaining = num_land_tiles
-max_stash_capacity = num_personal_pool
+    def _repr_html_(self) -> str:
+        '''Get a string representation of the board for debugging.
+        '''
+        if self.extents.x_min is None:
+            return "<p>Board is empty</p>"
+        rows = []
+        if self.extents.x_min < -100 or self.extents.x_max > 100:
+            raise ValueError(f"Board is too large to display in HTML (x: {self.extents.x_min} - {self.extents.x_max}). Use a smaller board.")
+        if self.extents.y_min < -100 or self.extents.y_max > 100:
+            raise ValueError(f"Board is too large to display in HTML (y: {self.extents.y_min} - {self.extents.y_max}). Use a smaller board.")
+        
+        first_row = []
+        for y in range(int(self.extents.y_min), int(self.extents.y_max) + 1):
+            first_row.append(f"<th>y{y}</th>")
+        rows.append(f"<tr style='height: 36px;'><th></th>{''.join(first_row)}</tr>")
+        
+        for x in range(int(self.extents.x_min), int(self.extents.x_max) + 1):
+            cells = []
+            for y in range(int(self.extents.y_min), int(self.extents.y_max) + 1):
+                coordinate = Coordinate(x, y)
+                color, abbreviation, rotation = self[coordinate].short_html
+                cells.append(f"<td style='background-color: {color}; transform: rotate({rotation}deg); width: 58px; height 58px; border: 1px solid white; color: black; text-align: center; font-size: 1.5rem; padding: 0; margin: 0;'>{abbreviation}</td>")
+            rows.append(f"<tr style='height: 60px;'><th>x{x}</th>{''.join(cells)}</tr>")
+        return f"<table style='table-layout: fixed;'>{''.join(rows)}</table>"
+    
 
-# Then start the main game loop.
-running = True
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            handle_mouse_click(event.pos, player=current_player)
-    draw_board()
-    pygame.display.flip()
-pygame.quit()
+    def get_vector(self, start:Coordinate, end:Coordinate) -> Vector:
+        '''Get a vector from the start to the end coordinate.
+
+        Args:
+            start: The starting coordinate of the vector.
+            end: The ending coordinate of the vector.
+        '''
+        return Vector(self, start, end)
+    
+
+    def get_equivalent_entity(self, entity:T) -> T|None:
+        '''Get the equivalent entity on the board.
+
+        The equivalent entity is an entity of the same type, coordinate, and owner.
+
+        Args:
+            entity: The entity to get the equivalent of.
+        '''
+
+        for tile in self.values():
+            if tile.get_equivalent_entity(entity):
+                return tile.get_equivalent_entity(entity)
+        return None
+
+
+class Vector():
+    '''An object that represents two coordinates on the board, where one of them is the starting coordinate.'''
+    def __init__(self, board:Board, start:Coordinate, end:Coordinate):
+        '''Create a new vector.
+
+        Args:
+            board: The board this vector is on.
+            start: The starting coordinate of the vector.
+            end: The ending coordinate of the vector.
+        '''
+        self.board = board
+        self.start = start
+        self.end = end
+    
+
+    def is_straight(self) -> bool:
+        '''Check if the vector is a straight line.'''
+        return self.start.x == self.end.x or self.start.y == self.end.y
+    
+
+    def is_diagonal(self) -> bool:
+        '''Check if the vector is a diagonal line.'''
+        return abs(self.start.x - self.end.x) == abs(self.start.y - self.end.y)
+
+
+U = TypeVar('U', bound='Entity')
+
+
+class EntityList(list, Generic[T]):
+    '''A collection of entities.
+    '''
+
+    def __init__(self, game:Game, entities:list[T]=[], name:str|None=None):
+        '''Create a new entity list.
+
+        Args:
+            game: The game this entity list is in.
+            entities: The entities to add to the list.
+            name: A unique name for this entity list.
+        '''
+        super().__init__(entities)
+        self.name = name
+        self.game = game
+
+    
+    class EntityListJson(TypedDict):
+        name: str
+        entities: list[Entity.EntityJson]
+
+
+    def to_json(self) -> EntityListJson:
+        '''Convert the entity list to JSON.
+        '''
+        return {
+            'name': self.name,
+            'entities': [entity.to_json() for entity in self]
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:EntityListJson, game:Game) -> 'EntityList':
+        '''Load the entity list from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this entity list is in.
+        '''
+        self = cls(game)
+        self.name = json_data['name']
+        entities = []
+        for entity_data in json_data['entities']:
+            entity_type = entity_data['type']
+            created_by = next((player for player in game.players if player.name == entity_data['created_by']), None)
+            owner = next((player for player in game.players if player.name == entity_data['owner']), None)
+            entity = globals()[entity_type](self, created_by, owner)
+            entities.append(entity)
+        self.extend(entities)
+        return self
+    
+
+    def copy(self) -> 'EntityList':
+        '''Create a copy of the entity list.
+
+        Returns:
+            A copy of the entity list.
+        '''
+        new_list = EntityList(self.game, name=self.name)
+        for entity in self:
+            new_list.append(entity.copy())
+        return new_list
+
+
+    def get_equivalent_entity(self, entity:T) -> T|None:
+        '''Get the equivalent entity in the list.
+
+        The equivalent entity is an entity of the same type, coordinate, and owner.
+
+        Args:
+            entity: The entity to get the equivalent of.
+        '''
+        for e in self:
+            if isinstance(e, type(entity)) and e.coordinate == entity.coordinate and e.owner.name == entity.owner.name:
+                return e
+        return None
+
+
+    def __iter__(self) -> Iterator[T]:
+        '''Iterate over the entities in the collection.
+        '''
+        return super().__iter__()
+    
+    
+    def has_type(self, entity_type: Type['Entity']) -> bool:
+        '''Check if the collection has an entity of the given type.
+
+        Use like `if entities.has_type(Turtle):`
+
+        Args:
+            entity_type: The type of entity to check for.
+        '''
+        return any(isinstance(entity, entity_type) for entity in self)
+    
+
+    def where(self,
+        entity_type: Type[U]=None,
+        created_by: Player|None=None,
+        owner: Player|None=None,
+        layer: Layer|None=None) -> 'EntityList[U]':
+        '''Search for entities in the collection.
+        
+        If any arguments are not provided, all entities for that parameter are returned.
+        
+        Args:
+            entity_type: The type of entity to find.
+            created_by: The player who created the entity.
+            owner: The player who owns the entity.
+            layer: The layer of the entity.
+        '''
+        entities = EntityList(self.game)
+        for entity in self:
+            if entity_type and not isinstance(entity, entity_type):
+                continue
+            if created_by and entity.created_by != created_by:
+                continue
+            if layer and entity.layer != layer:
+                continue
+            if owner and entity.owner != owner:
+                continue
+            entities.append(entity, reset_location=False)
+        return entities
+    
+
+    def where_not(self,
+        entity_type:Type['Entity']|None=None,
+        created_by:Player|None=None,
+        owner:Player|None=None,
+        layer:Layer|None=None) -> 'EntityList':
+        '''Get the entities in this list that do not match the given criteria.
+
+        If any arguments are not provided, all entities for that parameter are returned.
+
+        Args:
+            entity_type: The type of entity to exclude.
+            created_by: The player who created the entity to exclude.
+            owner: The player who owns the entity to exclude.
+            layer: The layer of the entity to exclude.
+        '''
+        entities = EntityList(self.game)
+        for entity in self:
+            if entity_type and isinstance(entity, entity_type):
+                continue
+            if created_by and entity.created_by == created_by:
+                continue
+            if layer and entity.layer == layer:
+                continue
+            if owner and entity.owner == owner:
+                continue
+            entities.append(entity)
+        return entities
+    
+
+    def _repr_html_(self) -> str:
+        res = []
+        for entity in self:
+            res.append(f"<div style='background-color: {entity.color}; font-size: 1.5rem;'>{entity.abbreviation}</div>")
+        return f"<div style='display: flex; flex-wrap: wrap; width: 100px;'>{''.join(res)}</div>"
+
+
+    def __getitem__(self, index:int) -> T:
+        '''Get an entity by index.'''
+        return super().__getitem__(index)
+    
+
+    def __str__(self) -> str:
+        '''Get a string representation of the entity list.
+        '''
+        res = []
+        for entity in self:
+            res.append(str(entity))
+        return f"EntityList:{self.name}({', '.join(res)})"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+    
+
+    def append(self, object:'Entity', reset_location:bool=True):
+        if reset_location:
+            object.location = self
+        return super().append(object)
+
+
+
+class Tile(EntityList):
+    '''A single tile (location) on the board.
+    '''
+    def __init__(self, board:Board, coordinate:Coordinate):
+        '''Create a new tile.
+
+        Args:
+            board: The board this tile is on.
+            coordinate: The coordinate of this tile.
+        '''
+        super().__init__(board.game, name=f"{board.name}{coordinate}")
+        self.board = board
+        self.coordinate = coordinate
+    
+
+    class TileJson(TypedDict):
+        name: str
+        coordinate: str
+        entities: list[Entity.EntityJson]
+    
+
+    def to_json(self) -> TileJson:
+        '''Convert the tile to JSON.
+        '''
+        return {
+            'name': self.name,
+            'coordinate': self.coordinate.to_json(),
+            'entities': [entity.to_json() for entity in self],
+            }
+    
+
+    @classmethod
+    def from_json(cls, json_data:TileJson, board:Board) -> 'EntityList':
+        '''Load the entity list from JSON.
+
+        Args:
+            json_data: The JSON data to load.
+            game: The game this entity list is in.
+        '''
+        self = cls(board, Coordinate.from_json(json_data['coordinate']))
+        self.name = json_data['name']
+        entities = []
+        for entity_data in json_data['entities']:
+            entity_type = entity_data['type']
+            created_by = next((player for player in self.game.players if player.name == entity_data['created_by']), None)
+            owner = next((player for player in self.game.players if player.name == entity_data['owner']), None)
+            entity = globals()[entity_type](self, created_by, owner)
+            entities.append(entity)
+        self.extend(entities)
+        return self
+    
+
+    def __hash__(self) -> int:
+        return hash((self.coordinate, self.board))
+
+
+    def __eq__(self, other:object) -> bool:
+        if not isinstance(other, Tile):
+            return False
+        return self.coordinate == other.coordinate and self.board == other.board
+    
+
+    def append(self, entity:Entity, reset_location:bool=True):
+        can_add = self.can_add(entity)
+        if can_add:
+            super().append(entity, reset_location)
+            self.board[self.coordinate] = self
+        else:
+            raise ValueError(f"Cannot add {entity.__class__.__name__} to tile at {self.coordinate}: {can_add}")
+    
+
+    def can_add(self, entity:Entity) -> BoolWithReason:
+        '''Check if an entity can be added to this tile.
+
+        This only checks tile-level constraints. Board.can_place_entity() and Board.can_move_piece()
+        include board-level constraints, and Player.can_place_piece() and Player.can_move_piece() include player-level constraints.
+
+        Args:
+            entity: The entity to add.
+        '''
+        if self.get_by_layer(entity.layer):
+            return BoolWithReason(f"layer {entity.layer.name} already occupied by {self.get_by_layer(entity.layer)}")
+        
+        if entity.layer.value > 0:
+            layer_below = Layer(entity.layer.value - 1)
+            if not self.get_by_layer(layer_below):
+                return BoolWithReason(f"{entity.layer.name}-layer entities must be placed on top of a {layer_below.name}-layer entity")
+    
+        return BoolWithReason(True)
+    
+
+    def get_by_layer(self, layer:Layer) -> 'Entity'|None:
+        '''Get the first entity of the given layer.
+
+        Args:
+            layer: The layer to get.
+        '''
+        for entity in self:
+            if entity.layer == layer:
+                return entity
+        return None
+
+    
+
+    @property
+    def land(self) -> 'Land'|None:
+        '''The land tile on this tile, if any.
+        '''
+        for entity in self:
+            if isinstance(entity, Land):
+                return entity
+        return None
+    
+
+    @property
+    def piece(self) -> 'Piece'|None:
+        '''The first piece on this tile, if any.
+        '''
+        for entity in self:
+            if isinstance(entity, Piece):
+                return entity
+        return None
+    
+
+    @property
+    def citadel(self) -> 'Citadel'|None:
+        '''The citadel on this tile, if any.
+        '''
+        for entity in self:
+            if isinstance(entity, Citadel):
+                return entity
+        return None
+
+
+    @property
+    def is_water(self) -> bool:
+        '''True if the tile is water.'''
+        return not self.has_type(Land)
+    
+
+    @property
+    def has_entities(self) -> bool:
+        '''True if the tile has any entities.'''
+        return len(self) > 0
+    
+
+    def get_adjacent_tiles(self, orthagonal:bool=True, diagonal:bool=True) -> list['Tile']:
+        '''Get the tiles adjacent to this tile.
+
+        Args:
+            orthagonal: If True, include orthagonal tiles.
+            diagonal: If True, include diagonal tiles.
+        '''
+        coordinates = self.coordinate.get_adjacent_coordinates(orthagonal, diagonal)
+        return self.board[coordinates]
+    
+    
+    @property
+    def short_html(self) -> tuple[str, str, str]:
+        '''Return a css color representing the terrain layer, and single character representing the piece layer.
+        '''
+        terrain_layer = self.get_by_layer(Layer.TERRAIN)
+        if terrain_layer:
+            color = terrain_layer.color
+        else:
+            color = self.board.default_tile_color
+        
+        piece_layer = self.get_by_layer(Layer.PIECE)
+        if piece_layer:
+            abbreviation = piece_layer.abbreviation
+            if piece_layer.owner:
+                rotation = piece_layer.owner.rotation
+            else:
+                rotation = 0
+        else:
+            abbreviation = " "
+            rotation = 0
+        return color, abbreviation, str(rotation)
+    
+
+    @property
+    def color(self) -> str:
+        '''The color of the tile.
+        '''
+        return self.short_html[0]
+
+
+
+class Entity(ABC):
+    '''An game object that can be placed on a tile.
+
+    Args:
+        created_by: The player who created this entity.
+        owner: The player who owns this entity.
+        location: The EntityList this entity is in.
+    '''
+    layer:Layer = Layer.PIECE
+    color:str = "#000000"
+    abbreviation:str = " "
+
+    def __init__(self, location:EntityList, created_by:Player|None=None, owner:Player|None=None):
+        self.created_by:Player|None = created_by
+        self.owner:Player|None = owner
+        self.location:EntityList = location
+        self.game:Game = location.game
+    
+
+    class EntityJson(TypedDict):
+        type: str
+        created_by: str|None
+        owner: str|None
+
+
+    def to_json(self) -> EntityJson:
+        '''Convert the entity to JSON.
+        '''
+        return {
+            'type': self.__class__.__name__,
+            'created_by': self.created_by.name if self.created_by else None,
+            'owner': self.owner.name if self.owner else None,
+            }
+    
+
+    def __str__(self) -> str:
+        res = self.__class__.__name__
+        if self.location:
+            if self.location.name:
+                res += f"({self.location.name})"
+        if self.owner:
+            res += f"({self.owner.name})"
+        return res
+    
+
+    def __repr__(self) -> str:
+        return self.__str__()
+    
+
+    def copy(self) -> 'Entity':
+        '''Create a copy of this entity.
+
+        Returns:
+            A copy of this entity.
+        '''
+        return self.__class__(self.location, self.created_by, self.owner)
+
+
+    @property
+    def board(self) -> Board|None:
+        '''The board this entity is on.
+        '''
+        if not self.location:
+            return None
+        if isinstance(self.location, Tile):
+            return self.location.board
+    
+
+    @property
+    def coordinate(self) -> Coordinate|None:
+        '''The coordinate of this piece on the board.
+        '''
+        if not self.location:
+            return None
+        if not isinstance(self.location, Tile):
+            return None
+        return self.location.coordinate
+    
+
+    def get_vector_to(self, target:'Tile') -> Vector:
+        '''Get a vector from this entity to the target coordinate.
+
+        Args:
+            target: The target coordinate.
+        '''
+        if self.board != target.board:
+            raise ValueError(f"Cannot get vector from {self} to {target}: not on the same board.")
+        return self.board.get_vector(self.coordinate, target.coordinate)
+    
+    @abstractmethod
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        '''The player can use this entity to perform an action on the given tile.
+
+        Args:
+            target: The tile to attempt to perform the action on.
+            player: The player using the piece.
+        '''
+    
+
+    def place(self, target:Tile, player:Player):
+        '''Place this entity on the given tile.
+
+        Args:
+            target: The tile to place the entity on.
+            player: The player placing the entity.
+        '''
+        self.game.place(self, target, player)
+    
+
+    def capture(self, target:Tile, player:Player):
+        '''Capture the entity at the given tile.
+
+        Args:
+            target: The tile to capture the entity on.
+            player: The player using the entity to capture the target.
+        '''
+        self.game.capture(self, target, player)
+    
+
+    def move(self, target:Tile, player:Player):
+        '''Move this entity to the given tile.
+
+        Args:
+            target: The tile to move the entity to.
+            player: The player moving the entity.
+        '''
+        self.game.move(self, target, player)
+    
+
+    def can_place(self, target:Tile, player:Player) -> BoolWithReason:
+        return self.game.can_place(self, target, player)
+    
+
+    def get_tiles_by_action(self, action_name:str) -> list[Tile]:
+        '''Get the tiles that can be used with the given action.
+
+        Args:
+            action_name: The name of the action to get the tiles for.
+        '''
+        tiles = []
+        for tile in self.game.board.values():
+            actions = self.actions(tile, self.owner)
+            if action_name in actions:
+                if actions[action_name].can_use(tile, self.owner):
+                    tiles.append(tile)
+        return tiles
+    
+
+    def simulate(self, action:str, target:Tile, player:Player) -> Game:
+        '''Simulate an action on this entity.
+
+        Args:
+            action: The name of the action to simulate.
+            target: The tile to simulate the action on.
+            player: The player using the entity to perform the action.
+        
+        Returns:
+            A copy of the game with the action performed.
+        '''
+        game = self.game.copy()
+        game.validate_actions = False
+        new_player = game.get_equivalent(player)
+        new_target = game.get_equivalent(target)
+        entity = game.get_equivalent(self)
+        entity.actions(new_target, new_player)[action].execute(new_target, new_player)
+        return game
+
+
+class Action():
+    '''An action that can be performed by a piece.
+
+    Args:
+        name: The name of the action.
+        description: The description of the action.
+    '''
+    def __init__(self, name:str, description:str, action:Callable[[Tile, Player], None], can_use:Callable[[Tile, Player], BoolWithReason]):
+        self.name = name
+        self.description = description
+        self.execute = action
+        self.can_use = can_use
+
+
+class ActionList(dict[str, Action]):
+    '''A collection of actions that can be performed by a piece.
+    '''
+    def __init__(self, target:Tile, player:Player):
+        '''Create a new action list.
+
+        Args:
+            target: The tile to perform the action on.
+            player: The player using the piece.
+        '''
+        super().__init__()
+        self.target = target
+        self.player = player
+
+
+    @overload
+    def add(self, name:str, description:str, action:Callable[[Tile, Player], None], can_use:Callable[[Tile, Player], BoolWithReason]):
+        '''Add an action to the list.
+        
+        Args:
+            name: The name of the action.
+            description: The description of the action.
+            action: The action to add.
+            can_use: A BoolWithReason indicating if the action can be used.
+        '''
+    @overload
+    def add(self, action:Action):
+        '''Add an action to the list.
+
+        Args:
+            action: The action to add.
+        '''
+    def add(self, name, description=None, action=None, can_use=None):
+        if isinstance(name, Action):
+            self[name.name] = name
+        else:
+            self[name] = Action(name, description, action, can_use)
+    
+
+    def __getitem__(self, key) -> Action:
+        return super().__getitem__(key)
+    
+
+    def usable_actions(self) -> 'ActionList':
+        '''Filter the actions to only those that can be used.
+        '''
+        usable = ActionList()
+        for name, action in self.items():
+            if action.can_use(self.target, self.player):
+                usable[name] = action
+        return usable
+
+
+class Piece(Entity):
+    '''The primary moveable entity in the game.
+    '''
+
+
+class Bird(Piece):
+    abbreviation = "🐦"
+
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList(target, player)
+        res.add("move", "Move in a straight line", self.move, self.can_move)
+        res.add("capture", "Capture a piece", self.capture, self.can_capture)
+        res.add("place", "Place a Bird", self.place, self.can_place)
+        return res
+    
+
+    def can_move(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Bird moves in a straight line, either horizontally or vertically, for as many tiles as you want.
+        # It cannot move diagonally.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
+
+        movement = self.get_vector_to(target)
+        if not movement.is_straight():
+            return BoolWithReason("Bird can only move in a straight line")
+
+        return self.game.can_move(self, target, player)
+    
+
+    def can_capture(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Bird can capture any piece it lands on during its move.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
+
+        movement = self.get_vector_to(target)
+        if not movement.is_straight():
+            return BoolWithReason("Bird can only capture in a straight line")
+        
+        return self.game.can_capture(self, target, player)
+    
+
+    def capture(self, target, player):
+        # The Bird takes the place of the captured piece when it captures.
+        super().capture(target, player)
+        self.move(target, player)
+
+        
+
+class Knight(Piece):
+    abbreviation = "♞"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList(target, player)
+        res.add("move", "Move one square", self.move, self.can_move)
+        res.add("capture", "Capture a piece", self.capture, self.can_capture)
+        res.add("place", "Place a Knight", self.place, self.can_place)
+        return res
+    
+
+    def can_move(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Knight moves one square at a time, either orthogonally (up, down, left, right) or diagonally.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not on the board with {target}")
+        if not target.coordinate in self.coordinate.get_adjacent_coordinates():
+            return BoolWithReason(f"{self} can only move one square at a time")
+
+        return self.game.can_move(self, target, player)
+
+
+    def capture(self, target, player):
+        # The Knight takes the place of the captured piece.
+        super().capture(target, player)
+        self.move(target, player)
+    
+
+    def can_capture(self, target:Tile, player:Player) -> BoolWithReason:
+        # The Knight captures any piece it lands on during its move.
+        if self.board != target.board:
+            return BoolWithReason(f"{self} is not the board with {target}")
+        
+        if not target.coordinate in self.coordinate.get_adjacent_coordinates():
+            return BoolWithReason(f"{self} cannot capture at {target}; it is more than one square away")
+
+        return self.game.can_capture(self, target, player)
+        
+
+
+class Turtle(Piece):
+    layer = Layer.TERRAIN
+    abbreviation = "🐢"
+
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+class Rabbit(Piece):
+    abbreviation = "🐇"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+class Builder(Piece):
+    abbreviation = "🙎"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+class Bomber(Piece):
+    abbreviation = "💣"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+class Necromancer(Piece):
+    abbreviation = "🧙‍♂️"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+class Assassin(Piece):
+    abbreviation = "🗡️"
+    
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        return ActionList(target, player)
+
+
+all_pieces = [
+    Bird,
+    Knight,
+    Turtle,
+    Rabbit,
+    Builder,
+    Bomber,
+    Necromancer,
+    Assassin
+    ]
+
+
+
+class Land(Entity):
+    '''A land entity. Most pieces are placed on tiles with land.
+    '''
+    color = "#fceecf"
+    layer = Layer.TERRAIN
+
+
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList(target, player)
+        res.add("place", "Place a land tile", self.place, self.can_place)
+        return res
+    
+
+    def can_place(self, target:Tile, player:Player) -> BoolWithReason:
+
+        is_adjacent_to_land = any([tile.has_type(Land) for tile in target.get_adjacent_tiles()])
+        board_has_no_land = len(self.game.board.where(Land)) == 0
+
+        if not (is_adjacent_to_land or board_has_no_land):
+            return BoolWithReason("Land tile must be placed adjacent to another land tile")
+
+        return self.game.can_place(self, target, player)
+
+
+
+class Citadel(Entity):
+    '''A citadel. Citadels spawn pieces. Capturing a citadel is the primary goal of the game.
+    '''
+    abbreviation = "⛃"
+
+    def actions(self, target:Tile, player:Player) -> ActionList:
+        res = ActionList(target, player)
+        res.add("place", "Place a Citadel", self.place, self.can_place)
+
+        return res
+
+
+    def can_place(self, target:Tile, player:Player) -> BoolWithReason:
+        # Citadels must be placed such that all citadels remain connected.
+        
+        new_game = self.simulate('place', target, player)
+
+        if not new_game.board.citadels_are_connected:
+            return BoolWithReason("Citadels must be connected.")
+        
+        return self.game.can_place(self, target, player)

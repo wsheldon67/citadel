@@ -1,4 +1,4 @@
-from will_citadel import *
+from citadel import *
 
 
 class ExampleGame():
