@@ -134,12 +134,22 @@ class Rectangle(NamedTuple):
             self.y_max + margin
             )
 
+    def __iter__(self) -> Iterator[Coordinate]:
+        '''Iterate over the coordinates in the rectangle.'''
+        for x in range(self.x_min, self.x_max + 1):
+            for y in range(self.y_min, self.y_max + 1):
+                yield Coordinate(x, y)
+
 
 
 class Game():
     '''The whole game.
     '''
     _player_rotations = [90, 270, 0, 180]
+    _player_colors = [
+        (255, 0, 0), (0, 0, 255), (0, 255, 0),
+        (200, 200, 0), (200, 0, 200), (0, 200, 200),
+    ]
     def __init__(self, number_of_players:int=2, lands_per_player:int=5, personal_pieces_per_player:int=3, community_pieces_per_player:int=3):
         '''Create a new game.
 
@@ -172,7 +182,7 @@ class Game():
         
 
         for i in range(number_of_players):
-            new_player = Player(f"Player {i}", self)
+            new_player = Player(f"Player {i}", self, self._player_colors[i])
             new_player.rotation = self._player_rotations[i]
             self.players.append(new_player)
 
@@ -450,7 +460,7 @@ class Game():
 class Player():
     '''A player in the game.
     '''
-    def __init__(self, name:str, game:Game):
+    def __init__(self, name:str, game:Game, color:tuple):
         '''
         Args:
             game: The game this player is in.
@@ -459,6 +469,7 @@ class Player():
         self.personal_stash:EntityList['Piece'] = EntityList(game, name=f"{name}'s Personal Stash")
         self.game:Game = game
         self.rotation:int = 0
+        self.color = color
     
 
     class PlayerJson(TypedDict):
@@ -474,6 +485,7 @@ class Player():
             'name': self.name,
             'personal_stash': self.personal_stash.to_json(),
             'rotation': self.rotation,
+            'color': self.color,
             }
     
 
@@ -485,7 +497,7 @@ class Player():
             json_data: The JSON data to load.
             game: The game this player is in.
         '''
-        player = cls(json_data['name'], game)
+        player = cls(json_data['name'], game, tuple(json_data['color']))
         player.personal_stash = EntityList.from_json(json_data['personal_stash'], game)
         player.rotation = json_data['rotation']
         return player
@@ -777,14 +789,14 @@ class Board(dict[Coordinate, 'Tile']):
         return self.name == other.name
 
     @overload
-    def __getitem__(self, coordinate:Coordinate) -> 'Tile':
+    def __getitem__(self, coordinate:Coordinate|tuple[int, int]) -> 'Tile':
         '''Get the tile at the given coordinate.
 
         Args:
             coordinate: The coordinate to get the tile at.
         '''
     @overload
-    def __getitem__(self, coordinates:list[Coordinate]) -> list['Tile']:
+    def __getitem__(self, coordinates:list[Coordinate|tuple[int, int]]) -> list['Tile']:
         '''Get the tiles at the given coordinates.
 
         Args:
@@ -968,7 +980,8 @@ class Board(dict[Coordinate, 'Tile']):
                 min_y = coordinate.y
             if max_y is None or coordinate.y > max_y:
                 max_y = coordinate.y
-        return Rectangle(min_x, max_x, min_y, max_y)
+
+        return Rectangle(min_x or 0, max_x or 0, min_y or 0, max_y or 0)
     
 
     def _repr_html_(self) -> str:
@@ -1431,8 +1444,8 @@ class Entity(ABC):
         location: The EntityList this entity is in.
     '''
     layer:Layer = Layer.PIECE
-    color:str = "#000000"
     abbreviation:str = " "
+    img:str = ""
 
     def __init__(self, location:EntityList, created_by:Player|None=None, owner:Player|None=None):
         self.created_by:Player|None = created_by
@@ -1440,6 +1453,13 @@ class Entity(ABC):
         self.location:EntityList = location
         self.game:Game = location.game
     
+
+    @property
+    def color(self) -> tuple:
+        if self.owner:
+            return self.owner.color
+        return (255, 255, 255)
+
 
     class EntityJson(TypedDict):
         type: str
@@ -1664,6 +1684,7 @@ class Piece(Entity):
 
 class Bird(Piece):
     abbreviation = "🐦"
+    img = "bird.png"
 
     def actions(self, target:Tile, player:Player) -> ActionList:
         res = ActionList(target, player)
@@ -1803,8 +1824,9 @@ all_pieces = [
 class Land(Entity):
     '''A land entity. Most pieces are placed on tiles with land.
     '''
-    color = "#fceecf"
+    color = (252, 238, 207)
     layer = Layer.TERRAIN
+    img = "land.png"
 
 
     def actions(self, target:Tile, player:Player) -> ActionList:

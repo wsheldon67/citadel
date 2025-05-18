@@ -85,6 +85,7 @@ class Button(Component):
             color: Color of the button
             font_size: Font size of the button label
         '''
+        super().__init__()
         self.x = x
         self.y = y
         self.w = w
@@ -182,12 +183,14 @@ class ConfigScreen(Component):
     '''Class for the configuration screen'''
     def __init__(self):
 
-        self.children = {}
+        self.children = {
+            "Continue": Button(X(72), Y(120), X(36), Y(12), "Continue"),
+        }
         self.pickers = {
             "Number of Players": [2, 2, 12],
             "Lands per Player": [10, 2, 96],
-            "Personal Pieces per Player": [3, 3, 48],
-            "Community Pieces per Player": [3, 3, 48],
+            "Personal Pieces per Player": [3, 1, 48],
+            "Community Pieces per Player": [3, 1, 48],
         }
         width = X(120)
         for i, (picker_name, (initial_value, min_value, max_value)) in enumerate(self.pickers.items()):
@@ -203,6 +206,119 @@ class ConfigScreen(Component):
         for name, child in self.children.items():
             if isinstance(child, NumberPicker):
                 self.pickers[name][0] = child.get_value(event.pos, event.button)
+        
+        if self.children["Continue"].clicked(event.pos, event.button):
+            print("Continue clicked")
+            app.current_screen.destroy()
+            app.game = Game(
+                self.pickers["Number of Players"][0],
+                self.pickers["Lands per Player"][0],
+                self.pickers["Personal Pieces per Player"][0],
+                self.pickers["Community Pieces per Player"][0],
+                )
+            app.current_screen = LandPlacement()
+
+
+def colorize_black_and_transparent(surface:pygame.Surface, new_color:tuple) -> pygame.Surface:  
+    """
+    Change black lines to a new color while preserving transparency.
+    Perfect for images that only have black and transparent pixels.
+    
+    Args:
+        surface: The pygame Surface with black lines
+        new_color: RGB tuple of the desired color (e.g. (255, 0, 0) for red)
+                   Can include alpha as fourth value if needed
+    
+    Returns:
+        A new Surface with colored lines
+    """
+    width, height = surface.get_size()
+    colored = pygame.Surface((width, height), pygame.SRCALPHA)
+    
+    # Extend the color with alpha if needed
+    if len(new_color) == 3:
+        full_color = (*new_color, 255)
+    else:
+        full_color = new_color
+        
+    # For each pixel, keep the transparency but change the color
+    for x in range(width):
+        for y in range(height):
+            pixel = surface.get_at((x, y))
+            if pixel[3] > 0:  # If not fully transparent
+                colored.set_at((x, y), (full_color[0], full_color[1], full_color[2], pixel[3]))
+    
+    return colored
+
+
+class DrawEntity(Component):
+    def __init__(self, entity:Entity, x:S, y:S, s:S):
+        super().__init__()
+        self.entity = entity
+        self.img = pygame.image.load(f"img/{entity.img}").convert_alpha()
+        self.img = colorize_black_and_transparent(self.img, self.entity.color)
+        self.img = pygame.transform.scale(self.img, (s.p, s.p))
+        self.rect = pygame.Rect(x.p, y.p, s.p, s.p)
+
+    def render(self):
+        '''Render the entity'''
+        surface = pygame.display.get_surface()
+        surface.blit(self.img, self.rect)
+
+
+class DrawWater(Button):
+    '''Water is just a blue rectangle.'''
+    def __init__(self, x:S, y:S, s:S):
+        super().__init__(x, y, s, s, "", (0, 0, 127))
+
+        
+
+class DrawTile(Component):
+    def __init__(self, tile:Tile, x:S, y:S, s:S):
+        super().__init__()
+        self.tile = tile
+        self.x, self.y = x, y
+        self.s = s
+        if tile.get_by_layer(Layer.TERRAIN):
+            self.children['terrain'] = DrawEntity(tile.get_by_layer(Layer.TERRAIN), x, y, s)
+        else:
+            self.children['terrain'] = DrawWater(x, y, s)
+        if tile.get_by_layer(Layer.PIECE):
+            self.children['piece'] = DrawEntity(tile.get_by_layer(Layer.PIECE), x, y, s)
+
+
+class DrawBoard(Component):
+    def __init__(self, board:Board, x:S, y:S, w:S, h:S):
+        super().__init__()
+        self.board = board
+        self.x, self.y = x, y
+        self.w, self.h = w, h
+        self.s = S(12)
+        self.update()
+        
+
+    def update(self):
+        '''Set the children of the board'''
+        for ix, iy in self.board.extents.add_margin(2):
+            tile_x = S(float(self.x) + ix * self.s)
+            tile_y = S(float(self.y) + iy * self.s)
+            self.children[f"{ix},{iy}"] = DrawTile(
+                self.board[(ix, iy)],
+                tile_x,
+                tile_y,
+                self.s
+                )
+
+
+class LandPlacement(Component):
+    '''Class for the land placement screen'''
+    def __init__(self):
+        super().__init__()
+        from citadel_test import ExampleGame
+        app.game = ExampleGame().setup_full_game()
+        self.children = {
+            "board": DrawBoard(app.game.board, X(72), Y(72), X(144-36), Y(144-36)),
+            }
 
 
 class App:
@@ -220,6 +336,7 @@ class App:
             pygame.KEYDOWN: [],
             pygame.QUIT: [(self.quit, self)],
             }
+        self.game:Game = None
 
 
     def run(self):
