@@ -1,7 +1,7 @@
 from citadel import *
 import pygame
 from pygame.event import Event
-from typing import overload
+from typing import overload, Self
 
 
 class Component(ABC):
@@ -23,9 +23,58 @@ class Component(ABC):
             child.destroy()
 
 
+class S(float):
+    '''Base class for scaling'''
+    def __new__(cls, value:float):
+        '''Create a new instance of S'''
+        return super().__new__(cls, value)
+    
+    @property
+    def p(self) -> float:
+        '''Get the value as actual screen pixels.'''
+        return min(app.w, app.h) * self / 144
+
+    def __add__(self, other:float|Self) -> Self:
+        '''Add two S values'''
+        return self.__class__(super().__add__(other))
+    
+    def __sub__(self, other:float|Self) -> Self:
+        '''Subtract two S values'''
+        return self.__class__(super().__sub__(other))
+    
+    def __mul__(self, other:float|Self) -> Self:
+        '''Multiply two S values'''
+        return self.__class__(super().__mul__(other))
+
+    def __truediv__(self, other:float|Self) -> Self:
+        '''Divide two S values'''
+        return self.__class__(super().__truediv__(other))
+
+    def __floordiv__(self, other:float|Self) -> Self:
+        '''Floor divide two S values'''
+        return self.__class__(super().__floordiv__(other))
+
+    def __mod__(self, other:float|Self) -> Self:
+        '''Modulo two S values'''
+        return self.__class__(super().__mod__(other))
+
+
+class X(S):
+    @property
+    def p(self) -> float:
+        '''Get the value as actual screen pixels.'''
+        return app.w * self / 144
+
+class Y(S):
+    @property
+    def p(self) -> float:
+        '''Get the value as actual screen pixels.'''
+        return app.h * self / 144
+
+
 class Button(Component):
     '''Class for a button'''
-    def __init__(self, x:int, y:int, w:int, h:int, label:str, color=(200, 200, 200), font_size:int=6):
+    def __init__(self, x:S, y:S, w:S, h:S, label:str, color=(200, 200, 200), font_size:S=S(6)):
         '''Initialize the button
         Args:
             x: X position of top left corner
@@ -43,15 +92,13 @@ class Button(Component):
         self.label = label
         self.color = color
         self.font_size = font_size
-        self.font = pygame.font.Font(None, int(app.to_actual(font_size)))
-        app.add_listener(pygame.VIDEORESIZE, self.resize, self)
-        self._x, self._y, self._w, self._h = app.to_actual(x, y, w, h)
+        self.font = pygame.font.Font(None, int(font_size.p))
 
 
     def render(self):
         '''Render the button'''
         surface = pygame.display.get_surface()
-        rect = pygame.Rect(self._x, self._y, self._w, self._h)
+        rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
         pygame.draw.rect(surface, self.color, rect)
         pygame.draw.rect(surface, (100, 100, 100), rect, 2)
         text_surf = self.font.render(self.label, True, (0, 0, 0))
@@ -62,24 +109,17 @@ class Button(Component):
     def clicked(self, pos:tuple[int, int], button:int) -> bool:
         '''Handle mouse button down events'''
         if button == pygame.BUTTON_LEFT:
-            pos = app.to_relative(*pos)
-            if self.x <= pos[0] <= self.x + self.w and self.y <= pos[1] <= self.y + self.h:
+            if self.x.p <= pos[0] <= self.x.p + self.w.p and self.y.p <= pos[1] <= self.y.p + self.h.p:
                 print(f"Button {self.label} clicked at {pos}")
                 return True
         return False
-    
-
-    def resize(self, event:Event):
-        '''Handle resize events'''
-        self._x, self._y, self._w, self._h = app.to_actual(self.x, self.y, self.w, self.h)
-        self.font = pygame.font.Font(None, int(app.to_actual(self.font_size)))
 
 
 class NumberPicker(Component):
     '''Class for a number picker'''
-    def __init__(self, x:int, y:int, w:int, h:int, label:str,
+    def __init__(self, x:S, y:S, w:S, h:S, label:str,
             initial_value:int=0, min_value:int=0, max_value:int=50,
-            font_size:int=9):
+            font_size:S=S(9)):
         '''Initialize the number picker
         Args:
             x: X position of top left corner
@@ -101,8 +141,8 @@ class NumberPicker(Component):
         self.w = w
         self.h = h
         self.font_size = font_size
-        self.rect = pygame.Rect(*app.to_actual(x, y, w, h))
-        self.font = pygame.font.Font(None, int(app.to_actual(font_size)))
+        self.rect = pygame.Rect(x.p, y.p, w.p, h.p)
+        self.font = pygame.font.Font(None, int(font_size.p))
         self.children = {
             "button_up": Button(x + w - h, y, h, h, "+", font_size=font_size),
             "button_down": Button(x, y, h, h, "-", font_size=font_size),
@@ -133,8 +173,8 @@ class NumberPicker(Component):
 
     def resize(self, event:Event):
         '''Handle resize events'''
-        self.rect = pygame.Rect(*app.to_actual(self.x, self.y, self.w, self.h))
-        self.font = pygame.font.Font(None, int(app.to_actual(self.font_size)))
+        self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
+        self.font = pygame.font.Font(None, int(self.font_size.p))
 
 
 
@@ -149,10 +189,11 @@ class ConfigScreen(Component):
             "Personal Pieces per Player": [3, 3, 48],
             "Community Pieces per Player": [3, 3, 48],
         }
-        width = 96
+        width = X(120)
         for i, (picker_name, (initial_value, min_value, max_value)) in enumerate(self.pickers.items()):
             self.children[picker_name] = NumberPicker(
-                app.center[0] - (width // 2), 12 + i * 24, width, 12, picker_name, initial_value, min_value, max_value
+                X(72) - (width // 2), Y(12 + i*24), width, Y(12),
+                picker_name, initial_value, min_value, max_value
             )
         app.add_listener(pygame.MOUSEBUTTONDOWN, self.on_click, self)
     
@@ -179,47 +220,6 @@ class App:
             pygame.KEYDOWN: [],
             pygame.QUIT: [(self.quit, self)],
             }
-
-    @property
-    def center(self) -> tuple[int, int]:
-        '''Get the center of the screen'''
-        return self.to_relative(self.w // 2, self.h // 2)
-
-
-    @overload
-    def to_actual(self, x:int) -> float:
-        '''Change a number to actual pixels'''
-    @overload
-    def to_actual(self, x:int, y:int, w:int, h:int) -> tuple[float, float, float, float]:
-        '''Change a rectangle to actual xy pixels'''
-    @overload
-    def to_actual(self, x:int, y:int) -> tuple[float, float]:
-        '''Change a point to actual xy pixels'''
-    def to_actual(self, x, y=None, w=None, h=None):
-        '''Get a rectangle '''
-        if w is not None and h is not None:
-            return (self.w * (x / 144), self.h * (y / 144), self.w * (w / 144), self.h * (h / 144))
-        if y is not None:
-            return (self.w * (x / 144), self.h * (y / 144))
-        return min(self.w * (x / 144), self.h * (x / 144))
-
-
-    @overload
-    def to_relative(self, x:int) -> float:
-        '''Change a number to relative pixels'''
-    @overload
-    def to_relative(self, x:int, y:int) -> tuple[float, float]:
-        '''Change a rectangle to relative xy pixels'''
-    @overload
-    def to_relative(self, x:int, y:int, w:int, h:int) -> tuple[float, float, float, float]:
-        '''Change a rectangle to relative xy pixels'''
-    def to_relative(self, x, y=None, w=None, h=None):
-        '''Get a rectangle '''
-        if w is not None and h is not None:
-            return (x * 144 / self.w, y * 144 / self.h, w * 144 / self.w, h * 144 / self.h)
-        if y is not None:
-            return (x * 144 / self.w, y * 144 / self.h)
-        return x * 144 / min(self.w, self.h)
 
 
     def run(self):
@@ -269,6 +269,7 @@ class App:
         
 
 app = App()
+
 
 if __name__ == "__main__":
     app.current_screen = ConfigScreen()
