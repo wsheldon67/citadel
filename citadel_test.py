@@ -446,3 +446,19 @@ def test_get_tile_by_tuple():
 
     assert tile.coordinate == Coordinate(0, 0), "The tile's coordinate is not correct."
     assert tile == game.board[Coordinate(0, 0)], "The tile is not the same as the one retrieved by the Coordinate object."
+
+
+def test_fancy_land():
+    game = ExampleGame().setup_full_game()
+
+    land14 = game.board[Coordinate(1, 4)].where(Land)[0]
+    elevation = land14.get_edge_elevation(Coordinate(1, 0))
+    assert elevation == 0
+    img = land14.img
+    assert img == 'beach0000.png'
+
+    land03 = game.board[Coordinate(0, 3)].where(Land)[0]
+    elevation = land03.get_edge_elevation(Coordinate(0, -1))
+    assert elevation == 1
+    img = land03.img
+    assert img == 'beach0001.png'

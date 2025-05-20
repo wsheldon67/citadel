@@ -270,10 +270,21 @@ class DrawEntity(Component):
         surface.blit(img, rect)
 
 
-class DrawWater(Button):
-    '''Water is just a blue rectangle.'''
+
+class DrawWater(Component):
     def __init__(self, x:S, y:S, s:S):
-        super().__init__(x, y, s, s, "", (0, 0, 127))
+        super().__init__()
+        self.x, self.y = x, y
+        self.s = s
+        self.img = pygame.image.load("img/water.png").convert_alpha()
+
+
+    def render(self):
+        '''Render the water'''
+        img = pygame.transform.scale(self.img, (self.s.p, self.s.p))
+        rect = pygame.Rect(self.x.p, self.y.p, self.s.p, self.s.p)
+        surface = pygame.display.get_surface()
+        surface.blit(img, rect)
 
         
 
@@ -283,10 +294,9 @@ class DrawTile(Component):
         self.tile = tile
         self.x, self.y = x, y
         self.s = s
+        self.children['water'] = DrawWater(x, y, s)
         if tile.get_by_layer(Layer.TERRAIN):
             self.children['terrain'] = DrawEntity(tile.get_by_layer(Layer.TERRAIN), x, y, s)
-        else:
-            self.children['terrain'] = DrawWater(x, y, s)
         if tile.get_by_layer(Layer.PIECE):
             shrunk = s * 0.9
             diff = s - shrunk
@@ -317,14 +327,46 @@ class DrawBoard(Component):
                 )
 
 
+class DrawEntityList(Component):
+    def __init__(self, entities:EntityList, x:S, y:S, w:S, h:S):
+        super().__init__()
+        self.entities = entities
+        self.x, self.y = x, y
+        self.w, self.h = w, h
+        self.s = S(12)
+        self.update()
+    
+
+    def render(self):
+        rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
+        surface = pygame.display.get_surface()
+        pygame.draw.rect(surface, (60, 60, 60), rect)
+        super().render()
+    
+
+    def update(self):
+        '''Set the children of the entity list'''
+        for i, entity in enumerate(self.entities):
+            entity_x = X(self.x + (i % 2) * self.s)
+            entity_y = Y(self.y + (i // 2) * self.s)
+            self.children[f"{entity}{i}"] = DrawEntity(
+                entity,
+                entity_x,
+                entity_y,
+                self.s
+                )
+
+
 class LandPlacement(Component):
     '''Class for the land placement screen'''
     def __init__(self):
         super().__init__()
-        from citadel_test import ExampleGame
-        app.game = ExampleGame().setup_full_game()
         self.children = {
             "board": DrawBoard(app.game.board, X(72), Y(72), X(144-36), Y(144-36)),
+            "player0": DrawEntityList(app.game.players[0].personal_stash,
+                X(144) - X(24), Y(0), X(24), Y(144)),
+            "player1": DrawEntityList(app.game.players[1].personal_stash,
+                X(0), Y(0), X(24), Y(144)),
             }
 
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
-from typing import Callable, overload, TYPE_CHECKING
-from .util import BoolWithReason, Layer
+from typing import Callable, overload, TYPE_CHECKING, Literal, Self
+from .util import BoolWithReason, Layer, Coordinate
 from .entity import Entity
+import os
 
 if TYPE_CHECKING:
     from .board import Tile
@@ -232,16 +233,47 @@ class Land(Entity):
     color = None
     layer = Layer.TERRAIN
 
-
-
     @property
     def img(self) -> str:
         from .board import Tile
         if isinstance(self.location, Tile):
-            adjacent = self.location.get_adjacent_tiles()
-            land_neighbors = [tile for tile in adjacent if not tile.is_water]
-            if len(land_neighbors) == 1:
-                return "forest.png"
+            def get_fancy_img():
+                elevations = []
+                for dir in [Coordinate(-1, 0), Coordinate(0, -1), Coordinate(1, 0), Coordinate(0, 1)]:
+                    elevation = self.get_edge_elevation(dir)
+                    elevations.append(elevation)
+                avg_elevation = sum(elevations) // len(elevations)
+                elevations_str = ''.join(map(str, elevations))
+                print(self.location.coordinate, elevations_str)
+                if avg_elevation == 0:
+                    return f"beach{elevations_str}.png"
+                return "beach1111.png"
+            fancy = get_fancy_img()
+            if os.path.exists(f"img/{fancy}"):
+                return fancy
+        return "beach1111.png"
+    
+
+    def get_edge_elevation(self, direction:Coordinate) -> int:
+        '''Get the type of edge in the given direction.
+        
+        Args:
+            direction: The direction to check.
+        
+        Returns:
+            The type of edge in the given direction.
+        '''
+        from .board import Tile
+        if not isinstance(self.location, Tile):
+            return 0
+        tile:Tile = self.location.board[self.location.coordinate + direction]
+        if not tile.has_type(Land):
+            return 0
+        adjacent = tile.get_adjacent_tiles()
+        water = len([t for t in adjacent if t.is_water])
+        if water == 0:
+            return 2
+        return 1
 
 
     def actions(self, target:Tile, player:Player) -> ActionList:
