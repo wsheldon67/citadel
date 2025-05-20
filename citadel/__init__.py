@@ -1728,6 +1728,7 @@ class Bird(Piece):
 
 class Knight(Piece):
     abbreviation = "♞"
+    img = "shield.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         res = ActionList(target, player)
@@ -1768,6 +1769,7 @@ class Knight(Piece):
 class Turtle(Piece):
     layer = Layer.TERRAIN
     abbreviation = "🐢"
+    img = "turtle.png"
 
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1775,6 +1777,7 @@ class Turtle(Piece):
 
 class Rabbit(Piece):
     abbreviation = "🐇"
+    img = "rabbit.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1782,6 +1785,7 @@ class Rabbit(Piece):
 
 class Builder(Piece):
     abbreviation = "🙎"
+    img = "pickaxe.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1789,6 +1793,7 @@ class Builder(Piece):
 
 class Bomber(Piece):
     abbreviation = "💣"
+    img = "bomb.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1796,6 +1801,7 @@ class Bomber(Piece):
 
 class Necromancer(Piece):
     abbreviation = "🧙‍♂️"
+    img = "skull.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1803,6 +1809,7 @@ class Necromancer(Piece):
 
 class Assassin(Piece):
     abbreviation = "🗡️"
+    img = "crosshair.png"
     
     def actions(self, target:Tile, player:Player) -> ActionList:
         return ActionList(target, player)
@@ -1824,9 +1831,18 @@ all_pieces = [
 class Land(Entity):
     '''A land entity. Most pieces are placed on tiles with land.
     '''
-    color = (252, 238, 207)
+    color = None
     layer = Layer.TERRAIN
-    img = "land.png"
+
+
+
+    @property
+    def img(self) -> str:
+        if isinstance(self.location, Tile):
+            adjacent = self.location.get_adjacent_tiles()
+            land_neighbors = [tile for tile in adjacent if not tile.is_water]
+            if len(land_neighbors) == 1:
+                return "forest.png"
 
 
     def actions(self, target:Tile, player:Player) -> ActionList:
@@ -1851,6 +1867,7 @@ class Citadel(Entity):
     '''A citadel. Citadels spawn pieces. Capturing a citadel is the primary goal of the game.
     '''
     abbreviation = "⛃"
+    img = "building-2.png"
 
     def actions(self, target:Tile, player:Player) -> ActionList:
         res = ActionList(target, player)

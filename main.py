@@ -255,15 +255,18 @@ class DrawEntity(Component):
     def __init__(self, entity:Entity, x:S, y:S, s:S):
         super().__init__()
         self.entity = entity
+        self.x, self.y, self.s = x, y, s
         self.img = pygame.image.load(f"img/{entity.img}").convert_alpha()
-        self.img = colorize_black_and_transparent(self.img, self.entity.color)
-        self.img = pygame.transform.scale(self.img, (s.p, s.p))
-        self.rect = pygame.Rect(x.p, y.p, s.p, s.p)
+        if entity.color:
+            self.img = colorize_black_and_transparent(self.img, self.entity.color)
+
 
     def render(self):
         '''Render the entity'''
+        img = pygame.transform.scale(self.img, (self.s.p, self.s.p))
+        rect = pygame.Rect(self.x.p, self.y.p, self.s.p, self.s.p)
         surface = pygame.display.get_surface()
-        surface.blit(self.img, self.rect)
+        surface.blit(img, rect)
 
 
 class DrawWater(Button):
@@ -284,7 +287,10 @@ class DrawTile(Component):
         else:
             self.children['terrain'] = DrawWater(x, y, s)
         if tile.get_by_layer(Layer.PIECE):
-            self.children['piece'] = DrawEntity(tile.get_by_layer(Layer.PIECE), x, y, s)
+            shrunk = s * 0.9
+            diff = s - shrunk
+            self.children['piece'] = DrawEntity(tile.get_by_layer(Layer.PIECE),
+                x + diff/2, y + diff/2, shrunk)
 
 
 class DrawBoard(Component):
