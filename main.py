@@ -2,6 +2,7 @@ from citadel import *
 import pygame
 from pygame.event import Event
 from typing import overload, Self
+from abc import ABC
 
 
 class Component(ABC):
