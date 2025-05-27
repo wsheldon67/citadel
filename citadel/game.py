@@ -263,7 +263,7 @@ class Game():
             return BoolWithReason(f"cannot add {entity} to {target}: {can_add_to_tile.reason}")
     
         if not entity in player.placeable_entities:
-            return BoolWithReason(f"Player '{self}' does not have access to place {entity}.")
+            return BoolWithReason(f"Player '{player}' does not have access to place {entity}.")
     
         if isinstance(entity, Piece) and not player.is_adjacent_to_citadel(target):
             return BoolWithReason(f"Cannot place {entity} at {target}: not adjacent to any of player's citadels.")

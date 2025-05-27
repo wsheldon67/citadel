@@ -374,4 +374,25 @@ class EntityList(list, Generic[T]):
     def append(self, object:'Entity', reset_location:bool=True):
         if reset_location:
             object.location = self
+        self.on_update()
         return super().append(object)
+    
+
+    def __setitem__(self, index:int, object:'Entity'):
+        '''Set an entity at the given index.
+        '''
+        self.on_update()
+        return super().__setitem__(index, object)
+    
+
+    def __delitem__(self, index:int):
+        '''Delete an entity at the given index.
+        '''
+        self.on_update()
+        return super().__delitem__(index)
+    
+
+    def on_update(self):
+        '''Called when the entity list is updated.
+        '''
+        pass

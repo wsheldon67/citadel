@@ -280,7 +280,11 @@ class Player():
             if not can_perform:
                 raise ActionError(can_perform.reason)
         action = entity.actions(target, self)[action_name]
+        old_location = entity.location
         action.execute(target, self)
+        entity.game.board.on_update()
+        entity.location.on_update()
+        old_location.on_update()
         entity.game.end_turn()
     
 

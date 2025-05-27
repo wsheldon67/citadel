@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypedDict, overload, Type, TypeVar
 import importlib
 
-from .util import Coordinate, Rectangle, BoolWithReason, Layer
+from .util import Coordinate, Rectangle, BoolWithReason, Layer, ActionError
 from .entity import EntityList
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class Tile(EntityList):
             super().append(entity, reset_location)
             self.board[self.coordinate] = self
         else:
-            raise ValueError(f"Cannot add {entity.__class__.__name__} to tile at {self.coordinate}: {can_add}")
+            raise ActionError(f"Cannot add {entity.__class__.__name__} to tile at {self.coordinate}: {can_add}")
     
 
     def can_add(self, entity:Entity) -> BoolWithReason:
@@ -330,6 +330,7 @@ class Board(dict[Coordinate, 'Tile']):
         if not to_test:
             entity.location = self[coordinate]
         self[coordinate].append(entity, not to_test)
+        self.on_update()
     
 
     def get_coordinate_of_entity(self, entity:'Entity') -> Coordinate|None:
@@ -356,6 +357,7 @@ class Board(dict[Coordinate, 'Tile']):
         self[coordinate].remove(entity)
         if not self[coordinate]:
             del self[coordinate]
+        self.on_update()
     
 
     def where(self,
@@ -508,6 +510,11 @@ class Board(dict[Coordinate, 'Tile']):
             if tile.get_equivalent_entity(entity):
                 return tile.get_equivalent_entity(entity)
         return None
+
+
+    def on_update(self):
+        '''Called when the board is updated.'''
+        pass
 
 
 class Vector():
