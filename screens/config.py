@@ -2,7 +2,7 @@ import pygame
 from pygame.event import Event
 from typing import TYPE_CHECKING
 
-from .shared import Component, Button, NumberPicker, X, Y, S
+from .shared import Component, Button, NumberPicker, X, Y
 
 from citadel.game import Game
 
@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 class ConfigScreen(Component):
     '''Class for the configuration screen'''
     def __init__(self, app:'App'):
-        S.app = app
         self.app = app
         self.children = {
             "Continue": Button(X(72), Y(120), X(36), Y(12), "Continue"),

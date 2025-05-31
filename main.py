@@ -87,6 +87,20 @@ class App():
 app = App()
 
 if __name__ == "__main__":
-    from screens.config import ConfigScreen
-    app.current_screen = ConfigScreen(app)
+    import sys
+    from screens.shared import S
+
+    S.app = app
+    startup = sys.argv[1] if len(sys.argv) > 1 else 'config'
+
+    if startup == 'config':
+        from screens.config import ConfigScreen
+        app.current_screen = ConfigScreen(app)
+
+    elif startup == 'land_placement':
+        from citadel.game import Game
+        from screens.land_placement import LandPlacement
+        app.game = Game()
+        app.current_screen = LandPlacement(app)
+
     app.run()
