@@ -81,16 +81,10 @@ class App():
         '''Match app variable to screen size'''
         self.w, self.h = event.w, event.h
         if self.current_screen:
-            for child in self.current_screen.children.values():
-                if hasattr(child, 'resize'):
-                    child.resize(event)
+            self.current_screen.resize(event)
 
 
 app = App()
-
-def get_app() -> 'App':
-    global app
-    return app
 
 if __name__ == "__main__":
     from screens.config import ConfigScreen

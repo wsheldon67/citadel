@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from ..citadel.game import Game
     from ..citadel.entity import Entity, EntityList
     from ..citadel.board import Tile, Board
+    from ..main import App
 
 
 
@@ -42,12 +43,14 @@ class Component(ABC):
 
     def resize(self, event:Event|None=None):
         '''Update the component's size and position based on a window resize.'''
-        pass
+        for child in self.children.values():
+            child.resize(event)
 
 
 
 class S(float):
     '''Base class for scaling'''
+    app:'App'
     def __new__(cls, value:float):
         '''Create a new instance of S'''
         return super().__new__(cls, value)
@@ -55,9 +58,7 @@ class S(float):
     @property
     def p(self) -> float:
         '''Get the value as actual screen pixels.'''
-        from main import get_app
-        app = get_app()
-        return min(app.w, app.h) * self / 144
+        return min(self.app.w, self.app.h) * self / 144
 
     def __add__(self, other:float|Self) -> Self:
         '''Add two S values'''
@@ -88,18 +89,14 @@ class X(S):
     @property
     def p(self) -> float:
         '''Get the value as actual screen pixels.'''
-        from main import get_app
-        app = get_app()
-        return app.w * self / 144
+        return self.app.w * self / 144
 
 class Y(S):
     @property
     def p(self) -> float:
         '''Get the value as actual screen pixels.'''
-        from main import get_app
-        app = get_app()
-        return app.h * self / 144
-    
+        return self.app.h * self / 144
+
 
 
 class Clickable(Component):
@@ -162,6 +159,8 @@ class Button(Clickable):
 
 class NumberPicker(Component):
     '''Class for a number picker'''
+    app:'App'
+
     def __init__(self, x:S, y:S, w:S, h:S, label:str,
             initial_value:int=0, min_value:int=0, max_value:int=50,
             font_size:S=S(9)):
@@ -206,9 +205,7 @@ class NumberPicker(Component):
 
     def get_value(self, event:Event) -> int:
         '''Handle mouse button down events'''
-        from main import get_app
-        app = get_app()
-        clicked:Button = app.get_component_at_position(event.pos, self)
+        clicked:Button = self.app.get_component_at_position(event.pos, self)
         if clicked.label == "+":
             if self.value < self.max_value:
                 self.value += 1
@@ -220,6 +217,7 @@ class NumberPicker(Component):
 
     def resize(self, event:Event):
         '''Handle resize events'''
+        super().resize(event)
         self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
         self.font = pygame.font.Font(None, int(self.font_size.p))
 
