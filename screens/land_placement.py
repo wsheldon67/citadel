@@ -2,8 +2,8 @@ import pygame
 from pygame.event import Event
 from typing import TYPE_CHECKING
 
-from .shared import Component, DrawBoard, DrawEntityList, DrawEntity, DrawTile
-from .shared import X, Y
+from .shared import DrawBoard, DrawEntityList, DrawEntity, DrawTile
+from .shared import Component, X, Y, MessageLog
 
 from citadel.util import ActionError
 
@@ -22,6 +22,7 @@ class LandPlacement(Component):
                 X(144) - X(24), Y(0), X(24), Y(144)),
             "player1": DrawEntityList(app.game.players[1].personal_stash,
                 X(0), Y(0), X(24), Y(144)),
+            "message_log": MessageLog(X(0), Y(144-24), X(144), Y(24)),
             }
         self.resize()
     
@@ -62,6 +63,7 @@ class LandPlacement(Component):
                 self.app.selected = None
             except ActionError as e:
                 print(e)
+                self.children['message_log'].add_message(str(e))
                 self.deselect()
     
 

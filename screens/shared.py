@@ -157,6 +157,55 @@ class Button(Clickable):
         self.font = pygame.font.Font(None, int(self.font_size.p))
 
 
+class MessageLog(Component):
+    '''Display the most recent messages that will fit.'''
+    def __init__(self, x:S, y:S, w:S, h:S, font_size:S=S(6)):
+        '''Initialize the message log
+        Args:
+            x: X position of top left corner
+            y: Y position of top left corner
+            w: Width of the message log
+            h: Height of the message log
+            font_size: Font size of the message log
+        '''
+        if h.p < font_size.p:
+            raise ValueError("Height must be at least as large as font size.")
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.font_size = font_size
+        self.font = pygame.font.Font(None, int(font_size.p))
+        self.messages = []
+        self.resize()
+    
+
+    def resize(self, event=None):
+        super().resize(event)
+        self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
+    
+
+    def render(self):
+        '''Render the message log'''
+        surface = pygame.display.get_surface()
+        pygame.draw.rect(surface, (60, 60, 60), self.rect)
+        pygame.draw.rect(surface, (100, 100, 100), self.rect, 2)
+        
+        # Render each message
+        for i, message in enumerate(self.messages):
+            text_surf = self.font.render(message, True, (255, 255, 255))
+            text_rect = text_surf.get_rect(topleft=(self.x.p + 5, self.y.p + i * self.font_size.p + 5))
+            surface.blit(text_surf, text_rect)
+    
+
+    def add_message(self, message:str):
+        '''Add a message to the log'''
+        self.messages.append(message)
+        if len(self.messages) > self.h.p // self.font_size.p:
+            self.messages.pop(0)
+
+
 class NumberPicker(Component):
     '''Class for a number picker'''
     app:'App'
