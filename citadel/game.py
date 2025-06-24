@@ -16,7 +16,7 @@ class Game():
     _player_colors = [
         (255, 0, 0), (0, 0, 255), (0, 255, 0),
         (200, 200, 0), (200, 0, 200), (0, 200, 200),
-    ]
+        ]
     def __init__(self, number_of_players:int=2, lands_per_player:int=5, personal_pieces_per_player:int=3, community_pieces_per_player:int=3):
         '''Create a new game.
 
