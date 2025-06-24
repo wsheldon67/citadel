@@ -244,7 +244,7 @@ class Land(Entity):
                     elevations.append(elevation)
                 avg_elevation = sum(elevations) // len(elevations)
                 elevations_str = ''.join(map(str, elevations))
-                print(self.location.coordinate, elevations_str)
+                # print(self.location.coordinate, elevations_str)
                 if avg_elevation == 0:
                     return f"beach{elevations_str}.png"
                 return "beach1111.png"

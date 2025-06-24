@@ -3,16 +3,16 @@ from pygame.event import Event
 from typing import TYPE_CHECKING
 
 from .shared import DrawBoard, DrawEntityList, DrawEntity, DrawTile
-from .shared import Component, X, Y, MessageLog
+from .shared import Component, X, Y, MessageLog, Button
 
-from citadel.util import ActionError
+from citadel.util import ActionError, GamePhase
 
 if TYPE_CHECKING:
     from main import App
 
 
 class LandPlacement(Component):
-    '''Class for the land placement screen'''
+    '''The land placement screen'''
     def __init__(self, app:'App'):
         super().__init__()
         self.app = app
@@ -28,7 +28,6 @@ class LandPlacement(Component):
     
 
     def handle_event(self, event):
-        '''Handle events for the land placement screen'''
         if event.type == pygame.MOUSEMOTION:
             self.on_mouse_motion(event)
         elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -51,7 +50,11 @@ class LandPlacement(Component):
         elif not self.app.selected and isinstance(clicked, DrawEntity):
             self.app.selected = clicked
             self.app.selected.clickable = False
-
+        
+        if self.app.game.phase == GamePhase.PIECE_SELECTION:
+            from .piece_selection import PieceSelection
+            self.app.current_screen = PieceSelection(self.app)
+            
 
     def place(self, on_tile:DrawTile):
         actions = self.app.selected.entity.actions(on_tile.tile, self.app.game.current_player)

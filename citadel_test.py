@@ -27,6 +27,7 @@ class ExampleGame():
         return self.game
     
     def place_lands(self) -> Game:
+        '''Place 5 lands per player'''
         player0, player1 = self.game.players
         player0.place(Land, Coordinate(0, 0))
         player1.place(Land, Coordinate(0, 1))

@@ -29,7 +29,7 @@ class Game():
         from .board import Board
         from .player import Player
         from .entity import EntityList
-        from .piece import Land, Citadel
+        from .piece import Land, Citadel, Bird, Knight
         #: The number of lands each player places during the LAND_PLACEMENT phase.
         self.lands_per_player:int = lands_per_player
         #: The number of personal pieces each chooses during the PIECE_SELECTION phase.
@@ -50,6 +50,10 @@ class Game():
         self.graveyard:EntityList[Piece] = EntityList(self, name='Graveyard')
         #: If true, skip validation checks.
         self.validate_actions = True
+        #: The pieces available to choose from during the PIECE_SELECTION phase.
+        self.available_pieces:EntityList[Piece] = EntityList(self, name='Available Pieces')
+        self.available_pieces.append(Bird(self.available_pieces))
+        self.available_pieces.append(Knight(self.available_pieces))
         
 
         for i in range(number_of_players):

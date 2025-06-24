@@ -98,6 +98,36 @@ class Y(S):
         return self.app.h * self / 144
 
 
+class Label(Component):
+    '''A label that adjusts the font size to fit in its rect.'''
+    def __init__(self, x:S, y:S, w:S, h:S, text:str):
+        '''Initialize the label
+        Args:
+            x: X position of top left corner
+            y: Y position of top left corner
+            w: Width of the label
+            h: Height of the label
+            text: Text to display in the label
+        '''
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.text = text
+        self.resize()
+
+    def render(self):
+        surface = pygame.display.get_surface()
+        text_surf = self.font.render(self.text, True, (255, 255, 255))
+        text_rect = text_surf.get_rect(center=self.rect.center)
+        surface.blit(text_surf, text_rect)
+    
+    def resize(self, event:Event|None=None):
+        self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
+        # Adjust font size based on the new width and height
+        self.font = pygame.font.Font(None, int(min(self.w.p, self.h.p) * 0.8))
+
 
 class Clickable(Component):
     '''Base class for clickable components'''
@@ -396,14 +426,18 @@ class DrawEntityList(Component):
         self.w, self.h = w, h
         self.s = S(12)
         self.z_index = 1
+        self.resize()
         self.update()
     
 
     def render(self):
-        rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
         surface = pygame.display.get_surface()
-        pygame.draw.rect(surface, (60, 60, 60), rect)
+        pygame.draw.rect(surface, (60, 60, 60), self.rect)
         super().render()
+    
+
+    def resize(self, event:Event|None=None):
+        self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
     
 
     def update(self):
