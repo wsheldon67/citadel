@@ -417,13 +417,11 @@ class DrawBoard(Component):
                 )
 
 
-class DrawEntityList(Component):
+class DrawEntityList(Clickable):
     def __init__(self, entities:EntityList, x:S, y:S, w:S, h:S):
-        super().__init__()
+        super().__init__(x, y, w, h)
         self.entities = entities
         self.entities.on_update = self.update
-        self.x, self.y = x, y
-        self.w, self.h = w, h
         self.s = S(12)
         self.z_index = 1
         self.resize()
@@ -434,10 +432,6 @@ class DrawEntityList(Component):
         surface = pygame.display.get_surface()
         pygame.draw.rect(surface, (60, 60, 60), self.rect)
         super().render()
-    
-
-    def resize(self, event:Event|None=None):
-        self.rect = pygame.Rect(self.x.p, self.y.p, self.w.p, self.h.p)
     
 
     def update(self):
