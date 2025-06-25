@@ -51,8 +51,11 @@ class LandPlacement(Component):
             self.app.selected = clicked
             self.app.selected.clickable = False
         
-        if self.app.game.phase == GamePhase.PIECE_SELECTION:
+        done_placing_lands = all([player.is_done_placing_lands for player in self.app.game.players])
+        done_placing_citadels = all([player.is_done_placing_citadels for player in self.app.game.players])
+        if done_placing_lands and done_placing_citadels:
             from .piece_selection import PieceSelection
+            self.app.game.phase = GamePhase.PIECE_SELECTION
             self.app.current_screen = PieceSelection(self.app)
             
 

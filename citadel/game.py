@@ -54,6 +54,8 @@ class Game():
         self.available_pieces:EntityList[Piece] = EntityList(self, name='Available Pieces')
         self.available_pieces.append(Bird(self.available_pieces))
         self.available_pieces.append(Knight(self.available_pieces))
+        #: The phase of the game.
+        self.phase = GamePhase.LAND_PLACEMENT
         
 
         for i in range(number_of_players):
@@ -177,22 +179,6 @@ class Game():
     
 
     @property
-    def phase(self) -> GamePhase:
-        '''The current phase of the game.
-        '''
-        from .util import GamePhase
-        if not all([player.is_done_placing_lands for player in self.players]):
-            return GamePhase.LAND_PLACEMENT
-        if not all([player.is_done_placing_citadels for player in self.players]):
-            return GamePhase.CITADEL_PLACEMENT
-        if not all([player.is_done_choosing_pieces for player in self.players]):
-            return GamePhase.PIECE_SELECTION
-        if not self.winner:
-            return GamePhase.BATTLE
-        return GamePhase.END
-    
-
-    @property
     def winner(self) -> Player|None:
         '''The winner of the game, if any.
         '''
@@ -302,8 +288,8 @@ class Game():
             target: The tile to attempt capture on.
             player: The player attempting the capture.
         '''
-        from .piece import Piece
-        if not target.where(Piece):
+        from .piece import Piece, Citadel
+        if not (target.where(Piece) or target.where(Citadel)):
             return BoolWithReason(f"{target} has no pieces to capture.")
         
         new_game = entity.simulate('capture', target, player)
@@ -315,11 +301,11 @@ class Game():
 
     def capture(self, entity:Entity, target:Tile, player:Player):
         '''Capture an entity, sending it to the graveyard.'''
-        from .piece import Piece
+        from .piece import Piece, Citadel
         if self.validate_actions:
             can_capture = self.can_capture(entity, target, player)
             if not can_capture:
                 raise PlacementError(f"Cannot capture {target} with {entity}: {can_capture.reason}")
-        entity = target.where(Piece)[0]
+        entity = (target.where(Piece) + target.where(Citadel))[0]
         self.graveyard.append(entity)
         self.board.remove(entity)

@@ -71,7 +71,8 @@ class Battle(Component):
                 self.app.selected = DrawEntity(clicked.tile.piece, clicked.x, clicked.y, S(12))
                 self.app.selected.clickable = False
         
-        if self.app.game.phase == GamePhase.END:
+        if self.app.game.winner:
+            self.app.game.phase = GamePhase.END
             print("Game over!")
     
 

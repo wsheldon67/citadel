@@ -68,8 +68,9 @@ class PieceSelection(Component):
             self.app.selected = clicked
             self.app.selected.clickable = False
         
-        if self.app.game.phase == GamePhase.BATTLE:
+        if all([player.is_done_choosing_pieces for player in self.app.game.players]):
             from .battle import Battle
+            self.app.game.phase = GamePhase.BATTLE
             self.app.current_screen = Battle(self.app)
     
 
