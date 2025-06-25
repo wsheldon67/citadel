@@ -418,12 +418,13 @@ class DrawBoard(Component):
 
 
 class DrawEntityList(Clickable):
-    def __init__(self, entities:EntityList, x:S, y:S, w:S, h:S):
+    def __init__(self, entities:EntityList, x:S, y:S, w:S, h:S, columns:int=2):
         super().__init__(x, y, w, h)
         self.entities = entities
         self.entities.on_update = self.update
         self.s = S(12)
         self.z_index = 1
+        self.columns = columns
         self.resize()
         self.update()
     
@@ -438,8 +439,8 @@ class DrawEntityList(Clickable):
         '''Set the children of the entity list'''
         self.children.clear()
         for i, entity in enumerate(self.entities):
-            entity_x = X(self.x + (i % 2) * self.s)
-            entity_y = Y(self.y + (i // 2) * self.s)
+            entity_x = X(self.x + (i % self.columns) * self.s)
+            entity_y = Y(self.y + (i // self.columns) * self.s)
             self.children[f"{entity}{i}"] = DrawEntity(
                 entity,
                 entity_x,

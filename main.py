@@ -107,5 +107,10 @@ if __name__ == "__main__":
         from screens.piece_selection import PieceSelection, place_lands
         place_lands(app)
         app.current_screen = PieceSelection(app)
+    
+    elif startup == 'battle':
+        from screens.battle import Battle, choose_pieces
+        choose_pieces(app)
+        app.current_screen = Battle(app)
 
     app.run()

@@ -35,10 +35,10 @@ class PieceSelection(Component):
                 X(0), Y(9), X(24), Y(144)),
             "player1_label": Label(X(0), Y(0), X(24), Y(9), "Player 2"),
             "community": DrawEntityList(app.game.community_pool,
-                X(24), Y(144-24), X(144-48), Y(24)),
+                X(24), Y(144-24), X(144-48), Y(24), columns=6),
             "community_label": Label(X(24), Y(144-24), X(144-48), Y(9), "Community"),
             "piece_picker": DrawEntityList(app.game.available_pieces,
-                X(24), Y(0), X(144-48), Y(24)),
+                X(24), Y(0), X(144-48), Y(24), columns=6),
             }
         self.children["player0"].clickable = True
         self.children["player1"].clickable = True
@@ -69,9 +69,8 @@ class PieceSelection(Component):
             self.app.selected.clickable = False
         
         if self.app.game.phase == GamePhase.BATTLE:
-            print("All done!")
-            # from .battle import Battle
-            # self.app.current_screen = Battle(self.app)
+            from .battle import Battle
+            self.app.current_screen = Battle(self.app)
     
 
     def choose_piece(self, location:EntityList):
