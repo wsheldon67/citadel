@@ -69,7 +69,7 @@ class ActionList(dict[str, Action]):
     def usable_actions(self) -> 'ActionList':
         '''Filter the actions to only those that can be used.
         '''
-        usable = ActionList()
+        usable = ActionList(self.target, self.player)
         for name, action in self.items():
             if action.can_use(self.target, self.player):
                 usable[name] = action

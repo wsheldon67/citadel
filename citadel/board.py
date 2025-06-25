@@ -133,6 +133,7 @@ class Tile(EntityList):
     def piece(self) -> 'Piece'|None:
         '''The first piece on this tile, if any.
         '''
+        from .piece import Piece
         for entity in self:
             if isinstance(entity, Piece):
                 return entity
